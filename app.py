@@ -171,32 +171,154 @@ with tab1:
         st.plotly_chart(fig, use_container_width=True)
 
 # ==============================================================================
-# TAB 2: SCREENER
+# TAB 2: WHALE SCREENER (SMART FILTER UPGRADE)
 # ==============================================================================
 with tab2:
-    st.markdown("### 🐋 Anomaly Screener")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        mode = st.radio("Mode", ["Whale (High AOV)", "Split (Low AOV)"])
-    with col2:
-        date_sel = st.date_input("Tanggal", df['Last Trading Date'].max())
-        date_sel = pd.to_datetime(date_sel)
-    with col3:
-        min_val = st.number_input("Min Value (Rp)", value=1_000_000_000, step=500_000_000)
-
-    df_day = df[df['Last Trading Date'] == date_sel].copy()
+    st.markdown("### 🐋 Whale & Retail Detection Screener")
     
-    if mode == "Whale (High AOV)":
-        suspects = df_day[(df_day['AOV_Ratio'] >= 2.0) & (df_day['Value'] >= min_val)].sort_values('AOV_Ratio', ascending=False)
-        cmap = 'Greens'
-    else:
-        suspects = df_day[(df_day['AOV_Ratio'] <= 0.6) & (df_day['AOV_Ratio'] > 0) & (df_day['Value'] >= min_val)].sort_values('AOV_Ratio', ascending=True)
-        cmap = 'Reds_r'
+    # --- 1. SETTINGS SECTION ---
+    with st.container(border=True):
+        col_set1, col_set2, col_set3 = st.columns(3)
+        
+        with col_set1:
+            st.markdown("#### 🎯 Mode Deteksi")
+            anomaly_type = st.radio(
+                "Target:",
+                ("🐋 Whale Signal (High AOV)", "⚡ Split/Retail Signal (Low AOV)"),
+                label_visibility="collapsed"
+            )
+            
+        with col_set2:
+            st.markdown("#### 📅 Tanggal Analisa")
+            selected_date_val = st.date_input("Pilih Tanggal", max_date, label_visibility="collapsed")
+            selected_date = pd.to_datetime(selected_date_val)
+            
+        with col_set3:
+            st.markdown("#### 💰 Min. Transaksi")
+            min_value = st.number_input("Rp (Miliar)", value=1_000_000_000, step=500_000_000, label_visibility="collapsed")
 
-    if not suspects.empty:
-        st.dataframe(suspects[['Stock Code', 'Close', 'Change %', 'Volume', 'Avg_Order_Volume', 'AOV_Ratio', 'Value']].style.format({'Close': 'Rp {:,.0f}', 'Change %': '{:+.2f}%', 'Volume': '{:,.0f}', 'Avg_Order_Volume': '{:,.0f}', 'AOV_Ratio': '{:.2f}x', 'Value': 'Rp {:,.0f}'}).background_gradient(subset=['AOV_Ratio'], cmap=cmap), use_container_width=True)
+    # --- 2. SMART PRICE FILTER (INI FITUR BARUNYA) ---
+    st.markdown("#### 📉 Kondisi Harga (Price Context)")
+    st.info("💡 **Fitur Baru:** Filter ini mencari saham yang AOV-nya anomali, tapi harganya belum terbang (Pre-Pump).")
+    
+    price_condition = st.selectbox(
+        "Pilih Fase Harga:",
+        [
+            "🔍 SEMUA FASE (Tampilkan Semua)",
+            "💎 HIDDEN GEM (Sideways/Datar)", 
+            "⚓ BOTTOM FISHING (Lagi Turun/Downtrend)",
+            "🚀 EARLY MOVE (Baru Mulai Naik)"
+        ]
+    )
+
+    # --- 3. FILTER LOGIC ---
+    df_daily = df[df['Last Trading Date'] == selected_date].copy()
+    
+    # A. Filter Anomali AOV (Whale vs Retail)
+    if anomaly_type == "🐋 Whale Signal (High AOV)":
+        # Whale: AOV Ratio Tinggi (> 2.0x)
+        min_ratio = 2.0
+        suspects = df_daily[
+            (df_daily['AOV_Ratio'] >= min_ratio) & 
+            (df_daily['Value'] >= min_value)
+        ]
+        color_map = 'Greens'
     else:
-        st.info("Tidak ada saham yang memenuhi kriteria.")
+        # Retail: AOV Ratio Rendah (< 0.6x)
+        suspects = df_daily[
+            (df_daily['AOV_Ratio'] <= 0.6) & 
+            (df_daily['AOV_Ratio'] > 0) & 
+            (df_daily['Value'] >= min_value)
+        ]
+        color_map = 'Reds_r'
+
+    # B. Filter Kondisi Harga (Price Action)
+    if not suspects.empty:
+        # Kita pakai VWMA_20D sebagai acuan Tren
+        if 'VWMA_20D' not in suspects.columns:
+            # Hitung VWMA simple jika belum ada
+            suspects['TP'] = (suspects['High'] + suspects['Low'] + suspects['Close']) / 3
+            suspects['VP'] = suspects['TP'] * suspects['Volume']
+            suspects['VWMA_20D'] = suspects.groupby('Stock Code')['VP'].transform(lambda x: x.rolling(20).sum() / x.rolling(20).sum())
+
+        if price_condition == "💎 HIDDEN GEM (Sideways/Datar)":
+            # Syarat: Perubahan harga tipis (-2% s/d +2%)
+            suspects = suspects[
+                (suspects['Change %'] >= -2.0) & 
+                (suspects['Change %'] <= 2.0)
+            ]
+            st.caption("ℹ️ Menampilkan saham yang **AOV Meledak** tapi **Harga Diam**. Indikasi Akumulasi Senyap.")
+
+        elif price_condition == "⚓ BOTTOM FISHING (Lagi Turun/Downtrend)":
+            # Syarat: Harga Merah ATAU Harga di bawah VWMA (Downtrend)
+            suspects = suspects[
+                (suspects['Close'] < suspects['VWMA_20D']) | 
+                (suspects['Change %'] < 0)
+            ]
+            st.caption("ℹ️ Menampilkan saham yang **Harganya Turun/Bawah** tapi **AOV Meledak**. Indikasi Penampungan Barang (Stopping Volume).")
+
+        elif price_condition == "🚀 EARLY MOVE (Baru Mulai Naik)":
+            # Syarat: Harga Hijau tapi belum terbang tinggi (0% s/d 4%)
+            suspects = suspects[
+                (suspects['Change %'] > 0) & 
+                (suspects['Change %'] <= 4.0)
+            ]
+            st.caption("ℹ️ Menampilkan saham yang **Baru Mulai Hijau** dengan dukungan **Volume Paus**. Indikasi Awal Uptrend.")
+    
+    # --- 4. DISPLAY RESULTS ---
+    if not suspects.empty:
+        # Sort by AOV Ratio descending
+        suspects = suspects.sort_values(by='AOV_Ratio', ascending=False)
+        
+        col_met1, col_met2 = st.columns(2)
+        col_met1.metric("Saham Ditemukan", len(suspects))
+        col_met2.metric("Avg AOV Ratio", f"{suspects['AOV_Ratio'].mean():.2f}x")
+
+        # Define Columns
+        desired_order = ['Stock Code', 'Company Name', 'Close', 'Change %', 'AOV_Ratio', 'Avg_Order_Volume', 'Value', 'VWMA_20D']
+        display_cols = [col for col in desired_order if col in suspects.columns]
+        display_df = suspects[display_cols].copy()
+
+        # Styling
+        styled_df = display_df.style
+        
+        # Gradient AOV
+        if 'AOV_Ratio' in display_df.columns:
+            styled_df = styled_df.background_gradient(subset=['AOV_Ratio'], cmap=color_map)
+        
+        # Color Change %
+        def color_change(val):
+            if val > 0: return 'color: #00cc00; font-weight: bold'
+            if val < 0: return 'color: #ff4444; font-weight: bold'
+            return 'color: gray'
+        
+        if 'Change %' in display_df.columns:
+            styled_df = styled_df.map(color_change, subset=['Change %'])
+
+        # Formatting
+        styled_df = styled_df.format({
+            'Close': 'Rp {:,.0f}',
+            'VWMA_20D': 'Rp {:,.0f}',
+            'Change %': '{:+.2f}%',
+            'Avg_Order_Volume': '{:,.0f}',
+            'AOV_Ratio': '{:.2f}x',
+            'Value': 'Rp {:,.0f}'
+        })
+
+        st.dataframe(
+            styled_df,
+            use_container_width=True,
+            column_config={
+                'Stock Code': st.column_config.TextColumn("Kode"),
+                'Close': st.column_config.Column("Harga"),
+                'VWMA_20D': st.column_config.Column("Rata2 (VWMA)"), # Untuk cek posisi harga
+                'AOV_Ratio': st.column_config.Column("Lonjakan AOV"),
+                'Avg_Order_Volume': st.column_config.Column("Lot/Trade")
+            },
+            hide_index=True
+        )
+    else:
+        st.warning(f"Tidak ditemukan saham dengan kriteria: **{price_condition}** pada tanggal tersebut.")
 
 # ==============================================================================
 # TAB 3: MARKET OVERVIEW
