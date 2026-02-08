@@ -133,7 +133,7 @@ max_date = df['Last Trading Date'].max()
 tab1, tab2, tab3, tab4 = st.tabs([
     "📈 Deep Dive", 
     "🐋 Screener", 
-    "📊 Market Overview",
+    "📊 BLUECHIP RADAR",
     "🧪 Research Lab"
 ])
 
@@ -613,22 +613,91 @@ with tab2:
             )
 
 # ==============================================================================
-# TAB 3: MARKET OVERVIEW
+# TAB 3: BLUECHIP RADAR (NEW FEATURE!)
 # ==============================================================================
 with tab3:
-    st.markdown("### 📊 Market Overview")
-    latest_df = df[df['Last Trading Date'] == df['Last Trading Date'].max()]
+    st.markdown("### 💎 Bluechip Radar (Big Caps Only)")
+    st.markdown("""
+    <div class="bluechip-card">
+        <b>Strategi Bluechip:</b> Mendeteksi arus dana institusi/asing pada saham berkapitalisasi besar.
+        Parameter disesuaikan: AOV Ratio > 1.25x (Lebih sensitif) dan Filter Likuiditas Tinggi.
+    </div>
+    """, unsafe_allow_html=True)
     
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total Stocks", len(latest_df))
-    c2.metric("Whales Detected", len(latest_df[latest_df['AOV_Ratio'] >= 1.5]))
-    c3.metric("Retail Detected", len(latest_df[(latest_df['AOV_Ratio'] <= 0.6) & (latest_df['AOV_Ratio'] > 0)]))
+    # 1. Filter Khusus Bluechip
+    col_bc1, col_bc2, col_bc3 = st.columns(3)
     
-    if 'Sector' in latest_df.columns:
-        sector_counts = latest_df[latest_df['AOV_Ratio'] >= 1.5]['Sector'].value_counts().reset_index()
-        sector_counts.columns = ['Sector', 'Whale Count']
-        fig = px.bar(sector_counts, x='Sector', y='Whale Count', title="Sektor Paling Banyak Paus Hari Ini", color='Whale Count', color_continuous_scale='Greens')
-        st.plotly_chart(fig, use_container_width=True)
+    with col_bc1:
+        bc_date = st.date_input("Tanggal Pantau", max_date, key="bc_date")
+        bc_date = pd.to_datetime(bc_date)
+        
+    with col_bc2:
+        # Filter Value Besar (Indikasi Big Cap)
+        min_bc_value = st.number_input("Min. Transaksi Harian (Rp)", value=20_000_000_000, step=5_000_000_000, format="%d", help="Default 20 Miliar untuk menyaring saham kecil.")
+        
+    with col_bc3:
+        # Sensitivitas AOV
+        bc_aov_threshold = st.slider("AOV Ratio Threshold", 1.1, 2.0, 1.25, 0.05, help="Bluechip susah gerak, 1.25x sudah signifikan.")
+
+    # 2. Logic Bluechip Detection
+    df_bc = df[df['Last Trading Date'] == bc_date].copy()
+    
+    # Filter Utama: Value Besar + AOV agak naik
+    bc_suspects = df_bc[
+        (df_bc['Value'] >= min_bc_value) & 
+        (df_bc['AOV_Ratio'] >= bc_aov_threshold)
+    ].sort_values(by='Value', ascending=False)
+    
+    if not bc_suspects.empty:
+        st.success(f"Ditemukan {len(bc_suspects)} Saham Big Caps dengan aktivitas institusi.")
+        
+        # Kolom Khusus Bluechip
+        cols_bc = ['Stock Code', 'Close', 'Change %', 'Net Foreign', 'Value', 'Value_Ratio', 'AOV_Ratio', 'Avg_Order_Volume']
+        
+        # Styling Khusus
+        styled_bc = bc_suspects[cols_bc].style
+        
+        # Highlight Foreign Flow
+        def color_foreign(val):
+            if val > 1_000_000_000: return 'color: #00cc00; font-weight: bold' # Asing beli > 1M
+            if val < -1_000_000_000: return 'color: #ff4444; font-weight: bold' # Asing jual > 1M
+            return 'color: gray'
+        
+        # Highlight Value Spike (Uang Masuk)
+        def color_val_ratio(val):
+            if val > 1.5: return 'background-color: #e3f2fd; color: #2962ff; font-weight: bold'
+            return ''
+
+        styled_bc = styled_bc.map(color_foreign, subset=['Net Foreign'])
+        styled_bc = styled_bc.map(color_val_ratio, subset=['Value_Ratio'])
+        styled_bc = styled_bc.background_gradient(subset=['AOV_Ratio'], cmap='Blues', vmin=1.0, vmax=2.0)
+        
+        styled_bc = styled_bc.format({
+            'Close': 'Rp {:,.0f}',
+            'Change %': '{:+.2f}%',
+            'Net Foreign': 'Rp {:,.0f}',
+            'Value': 'Rp {:,.0f}',
+            'Value_Ratio': '{:.1f}x', # Spike nilai transaksi
+            'AOV_Ratio': '{:.2f}x',
+            'Avg_Order_Volume': '{:,.0f}'
+        })
+        
+        st.dataframe(
+            styled_bc,
+            use_container_width=True,
+            column_config={
+                'Stock Code': st.column_config.TextColumn("Kode"),
+                'Net Foreign': st.column_config.Column("Asing (Net)"),
+                'Value_Ratio': st.column_config.Column("Ledakan Value", help="Hari ini vs Rata2 20 Hari. >1.5x berarti uang masuk deras."),
+                'AOV_Ratio': st.column_config.Column("AOV Score")
+            },
+            hide_index=True
+        )
+        
+        st.caption("💡 **Tips:** Fokus pada saham dengan **Net Foreign Hijau** (Asing Masuk) dan **Value Ratio > 1.5x** (Uang Deras).")
+        
+    else:
+        st.info("Tidak ada Big Caps yang memenuhi kriteria radar hari ini.")
 
 # ==============================================================================
 # TAB 4: RESEARCH LAB (Backtesting)
