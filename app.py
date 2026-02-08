@@ -1140,15 +1140,15 @@ with tab2:
             column_config={
                 'Stock Code': st.column_config.TextColumn("Kode", width="small"),
                 'Company Name': st.column_config.TextColumn("Nama Perusahaan", width="medium"),
+                'Sector': st.column_config.TextColumn("Sektor", width="medium"),
                 'Close': st.column_config.Column("Harga"), # Biarkan Styler yang mengatur format
                 'Change %': st.column_config.Column("Change %"),
+                'Frequency': st.column_config.Column("Freq"),
                 'Volume': st.column_config.Column("Volume"),
+                'Value': st.column_config.Column("Value"),
                 'Avg_Order_Volume': st.column_config.Column("Avg Lot"),
                 'AOV_Ratio': st.column_config.Column("AOV Ratio"),
-                'Value': st.column_config.Column("Value"),
-                'Frequency': st.column_config.Column("Freq"),
-                'Conviction_Score': st.column_config.Column("Conviction"),
-                'Sector': st.column_config.TextColumn("Sektor", width="medium")
+                'Conviction_Score': st.column_config.Column("Conviction")
             }
         )
         
