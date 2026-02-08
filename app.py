@@ -401,6 +401,23 @@ with tab1:
         )
         
         # Update layout
+        
+        # 4. MEMPERBAIKI CHART OMPONG (Gap Removal)
+        # Kita ambil daftar semua tanggal yang ADA di data
+        dt_all = pd.date_range(start=df_chart['Last Trading Date'].min(), end=df_chart['Last Trading Date'].max())
+        
+        # Kita cari tanggal mana yang TIDAK ADA di data (Sabtu, Minggu, Libur)
+        # Ini adalah 'gap' yang harus dibuang oleh Plotly
+        dt_obs = [d.strftime("%Y-%m-%d") for d in df_chart['Last Trading Date']]
+        dt_breaks = [d.strftime("%Y-%m-%d") for d in dt_all if d.strftime("%Y-%m-%d") not in dt_obs]
+
+        # Update Layout dengan Rangebreaks
+        fig.update_xaxes(
+            rangebreaks=[
+                dict(values=dt_breaks) # Sembunyikan tanggal-tanggal kosong ini
+            ]
+        )
+
         fig.update_layout(
             height=800,
             title=f"{company_name} ({selected_stock}) - Comprehensive Analysis",
@@ -410,13 +427,7 @@ with tab1:
             plot_bgcolor='white',
             paper_bgcolor='white',
             font=dict(size=12),
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1
-            )
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         
         # Update axis labels
