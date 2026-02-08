@@ -250,10 +250,36 @@ with tab1:
             st.metric("Frekuensi", f"{freq:,.0f}x", help="Jumlah kali transaksi terjadi")
             
         with m4:
-            # Foreign Flow
-            net_foreign = last_row.get('Net Foreign', 0)
-            nf_fmt = f"{abs(net_foreign)/1e9:.1f} M" if abs(net_foreign) >= 1e9 else f"{abs(net_foreign)/1e6:.0f} Jt"
-            st.metric("Asing (Net)", nf_fmt, delta=nf_fmt if net_foreign > 0 else f"-{nf_fmt}", delta_color="normal")
+            # Foreign Flow (CUMULATIVE LOGIC)
+            # 1. Hitung Total selama periode chart (misal 30 hari)
+            cum_foreign = stock_data['Net Foreign'].sum()
+            
+            # 2. Ambil data hari terakhir saja (untuk info tambahan/delta)
+            last_day_foreign = last_row.get('Net Foreign', 0)
+            
+            # Format Angka Kumulatif (Miliar/Juta)
+            if abs(cum_foreign) >= 1e9:
+                cum_fmt = f"{cum_foreign/1e9:+.1f} M"
+            else:
+                cum_fmt = f"{cum_foreign/1e6:+.0f} Jt"
+                
+            # Format Angka Hari Ini (untuk Delta)
+            if abs(last_day_foreign) >= 1e9:
+                last_fmt = f"{last_day_foreign/1e9:+.1f} M"
+            else:
+                last_fmt = f"{last_day_foreign/1e6:+.0f} Jt"
+
+            # Tampilkan Metric
+            # Label: Menyesuaikan dengan periode chart
+            # Value: Total Kumulatif
+            # Delta: Flow Hari Ini (Hijau kalau beli, Merah kalau jual)
+            st.metric(
+                label=f"Asing (Total {chart_days} Hari)", 
+                value=cum_fmt, 
+                delta=f"{last_fmt} (Hari Ini)", 
+                delta_color="normal",
+                help="Angka Besar = Total Net Buy/Sell Asing selama periode chart.\nAngka Kecil = Net Buy/Sell Hari Terakhir."
+            )
 
         with m5:
             # Free Float (New Feature)
