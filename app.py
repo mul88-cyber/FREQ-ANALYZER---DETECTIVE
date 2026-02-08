@@ -7,49 +7,32 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 import io
-from datetime import timedelta
 
 # ==============================================================================
-# 1. KONFIGURASI HALAMAN & CSS
+# 1. KONFIGURASI HALAMAN
 # ==============================================================================
 st.set_page_config(
-    page_title="Bandar Detector - Frequency Analyzer",
-    page_icon="🕵️‍♂️",
+    page_title="Avg Order Volume Anomaly Detector",
+    page_icon="🐋",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS untuk tampilan lebih bersih
+st.title("🐋 Avg Order Volume (AOV) Anomaly Detector")
 st.markdown("""
-<style>
-    .metric-card {
-        background-color: #0e1117;
-        border: 1px solid #262730;
-        padding: 15px;
-        border-radius: 5px;
-        color: white;
-    }
-    div[data-testid="stMetricValue"] {
-        font-size: 24px;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-st.title("🕵️‍♂️ Frequency Analyzer: Deteksi 'Kode Morse' Bandar")
-st.markdown("""
-**Logic Deteksi:** Mencari aktivitas **Split Order** dimana Frekuensi melonjak drastis (Spike), 
-namun Volume tidak naik setinggi Frekuensi (Lot per Trade Drop), disertai dengan Value transaksi yang valid.
+**Logic:** Dashboard ini memanfaatkan kolom pre-calculated **`Avg_Order_Volume`** dan **`MA30_AOVol`**.
+* **Whale Signal (Hijau):** Rata-rata lot per order melonjak tinggi di atas rata-rata 30 hari (Akumulasi Kasar).
+* **Split/Retail (Merah):** Rata-rata lot per order anjlok di bawah rata-rata (Distribusi/Kamuflase).
 """)
 
 # ==============================================================================
-# 2. KONEKSI GOOGLE DRIVE
+# 2. LOAD DATA DARI GDRIVE
 # ==============================================================================
 FOLDER_ID = '1hX2jwUrAgi4Fr8xkcFWjCW6vbk6lsIlP'
 FILE_NAME = 'Kompilasi_Data_1Tahun.csv'
 
 @st.cache_resource
 def get_drive_service():
-    """Membuat service Google Drive dari Secrets."""
     try:
         creds = service_account.Credentials.from_service_account_info(
             st.secrets["gcp_service_account"],
@@ -57,173 +40,168 @@ def get_drive_service():
         )
         return build('drive', 'v3', credentials=creds)
     except Exception as e:
-        st.error(f"Gagal memuat kredensial: {e}")
+        st.error(f"Error Auth: {e}")
         return None
 
 @st.cache_data(ttl=3600)
-def load_data_from_drive():
-    """Download dan baca CSV dari Google Drive."""
+def load_data():
     try:
         service = get_drive_service()
         if not service: return None
-
+        
         query = f"'{FOLDER_ID}' in parents and name='{FILE_NAME}' and trashed=false"
         results = service.files().list(q=query, fields="files(id, name)").execute()
         files = results.get('files', [])
-
-        if not files:
-            st.error(f"File '{FILE_NAME}' tidak ditemukan.")
-            return None
-
+        
+        if not files: return None
+        
         file_id = files[0]['id']
         request = service.files().get_media(fileId=file_id)
         fh = io.BytesIO()
         downloader = MediaIoBaseDownload(fh, request)
         done = False
-        while done is False:
-            status, done = downloader.next_chunk()
+        while done is False: status, done = downloader.next_chunk()
         
         fh.seek(0)
         df = pd.read_csv(fh)
         
-        # Cleaning Dasar
+        # --- PREPROCESSING ---
+        # 1. Date Conversion
         df['Last Trading Date'] = pd.to_datetime(df['Last Trading Date'])
-        num_cols = ['Close', 'Open Price', 'High', 'Low', 'Frequency', 'Volume', 'Value', 'Previous', 'Change']
-        for col in num_cols:
+        
+        # 2. Ensure Numeric
+        numeric_cols = ['Close', 'Open Price', 'High', 'Low', 'Volume', 'Frequency', 'Avg_Order_Volume', 'MA30_AOVol', 'Value']
+        for col in numeric_cols:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
                 
+        # 3. Hitung Ulang Value jika 0 (Untuk filter saham gocap/sepi)
+        if 'Value' not in df.columns or df['Value'].sum() == 0:
+            df['Value'] = df['Close'] * df['Volume'] * 100
+            
         return df
     except Exception as e:
-        st.error(f"Error loading data: {e}")
+        st.error(f"Gagal Load Data: {e}")
         return None
 
-# Load Data
-with st.spinner('Sedang mengintip gudang data Bandar...'):
-    df_raw = load_data_from_drive()
+with st.spinner('Sedang mengambil data Avg Order Volume...'):
+    df_raw = load_data()
 
 if df_raw is None:
     st.stop()
 
 # ==============================================================================
-# 3. CORE LOGIC: BANDARMOLOGY CALCULATION
+# 3. CALCULATE ANOMALY RATIO (ON THE FLY)
 # ==============================================================================
-# Logic ini dijalankan on-the-fly agar responsif terhadap update data
-
 df = df_raw.sort_values(by=['Stock Code', 'Last Trading Date']).copy()
 
-# A. Moving Average 20 Hari (Baseline)
-# Ditambah +1 untuk menghindari pembagian dengan nol
-df['MA20_Freq'] = df.groupby('Stock Code')['Frequency'].transform(lambda x: x.rolling(20, min_periods=1).mean())
-df['MA20_Vol']  = df.groupby('Stock Code')['Volume'].transform(lambda x: x.rolling(20, min_periods=1).mean())
-
-# B. SPIKE RATIO (Kekuatan Lonjakan)
-# Logic: Hari ini / Rata-rata 20 hari
-df['Freq_Spike'] = df['Frequency'] / (df['MA20_Freq'] + 1)
-df['Vol_Spike']  = df['Volume'] / (df['MA20_Vol'] + 1)
-
-# C. DETEKSI SPLIT ORDER (Anomaly Score)
-# Logic: Jika Freq Spike JAUH LEBIH TINGGI dari Vol Spike, berarti order dipecah.
-# Rumus: Freq Spike / Vol Spike.
-# Contoh: Freq naik 5x, Vol cuma naik 1x -> Score 5.0 (Sangat Mencurigakan)
-df['Anomaly_Score'] = np.where(df['Vol_Spike'] > 0.1, df['Freq_Spike'] / (df['Vol_Spike'] + 0.1), 0)
-
-# D. ESTIMASI VALUE (Filter Noise)
-# Asumsi Volume dalam lembar atau lot, sesuaikan. Di IDX biasanya Lot (100 lembar).
-# Kita gunakan kolom 'Value' jika ada, jika tidak kita hitung manual.
-if 'Value' not in df.columns or df['Value'].sum() == 0:
-    df['Tx_Value'] = df['Close'] * df['Volume'] * 100 
-else:
-    df['Tx_Value'] = df['Value']
-
-# E. Lot Per Trade (LPT) - Indikator Tambahan
-df['LPT'] = np.where(df['Frequency'] > 0, df['Volume'] / df['Frequency'], 0)
+# AOV Ratio: Seberapa besar Order hari ini dibanding Rata-rata 30 hari?
+# Ratio 2.0 artinya order hari ini 2x lipat lebih besar dari biasanya (Whale).
+# Ratio 0.5 artinya order hari ini cuma setengah dari biasanya (Retail/Split).
+df['AOV_Ratio'] = np.where(df['MA30_AOVol'] > 0, df['Avg_Order_Volume'] / df['MA30_AOVol'], 0)
 
 # ==============================================================================
-# 4. SIDEBAR & PARAMETER
+# 4. SIDEBAR & FILTERS
 # ==============================================================================
-st.sidebar.header("⚙️ Filter Parameter")
+st.sidebar.header("⚙️ Filter Anomali")
 
-# Tanggal Analisa
+# Tanggal
 max_date = df['Last Trading Date'].max()
-selected_date = st.sidebar.date_input("Pilih Tanggal", max_date)
+selected_date = st.sidebar.date_input("Tanggal Analisa", max_date)
 selected_date = pd.to_datetime(selected_date)
 
-st.sidebar.subheader("Parameter 'Kode Morse'")
-# Threshold Freq Spike
-min_freq_spike = st.sidebar.slider("1. Min. Frequency Spike (x Rata-rata)", 1.5, 10.0, 2.5, help="Frekuensi hari ini harus X kali lipat dari biasanya.")
+# Jenis Anomali
+anomaly_type = st.sidebar.radio(
+    "Tipe Anomali:",
+    ("🐋 Whale Detection (High AOV)", "⚡ Split/Retail Detection (Low AOV)"),
+    help="Whale = Lot Gede. Split = Lot Kecil."
+)
 
-# Threshold Anomaly (Split Order)
-min_anomaly_score = st.sidebar.slider("2. Min. Split Intensity (Freq vs Vol)", 0.8, 5.0, 1.2, help="Nilai > 1.2 artinya Frekuensi tumbuh lebih cepat dari Volume (Indikasi Split).")
+st.sidebar.divider()
 
-# Threshold Value (Duit)
-min_tx_value = st.sidebar.number_input("3. Min. Value Transaksi (Rp)", value=500_000_000, step=100_000_000, help="Filter saham 'gocap' atau sepi peminat.")
+# Thresholds
+if anomaly_type == "🐋 Whale Detection (High AOV)":
+    min_ratio = st.sidebar.slider("Min. Lonjakan AOV (x Lipat)", 1.5, 10.0, 2.0, help="Order hari ini harus X kali lebih besar dari rata-rata.")
+    min_value = st.sidebar.number_input("Min. Transaksi (Rp)", value=1_000_000_000, step=500_000_000)
+else:
+    # Untuk split order, kita cari yang AOV-nya DROP tapi Volume-nya Gede
+    max_ratio = st.sidebar.slider("Max. Ratio AOV (0.x)", 0.1, 0.9, 0.6, help="Order hari ini harus DI BAWAH 0.x kali rata-rata.")
+    min_freq_spike = st.sidebar.slider("Min. Frequency Spike", 2.0, 10.0, 3.0, help="Frekuensi harus meledak.")
+    min_value = st.sidebar.number_input("Min. Transaksi (Rp)", value=500_000_000, step=100_000_000)
 
-# Filter Data Harian
+# Filter Harian
 df_daily = df[df['Last Trading Date'] == selected_date].copy()
 
 # ==============================================================================
-# 5. DASHBOARD UTAMA
+# 5. DASHBOARD LAYOUT
 # ==============================================================================
 
-# --- A. METRICS ---
-col1, col2, col3 = st.columns(3)
-col1.metric("Tanggal Data", selected_date.strftime('%d %B %Y'))
-col2.metric("Total Saham", f"{len(df_daily)}")
+# --- SCREENER LOGIC ---
+if anomaly_type == "🐋 Whale Detection (High AOV)":
+    # Cari yang AOV Ratio Tinggi
+    suspects = df_daily[
+        (df_daily['AOV_Ratio'] >= min_ratio) & 
+        (df_daily['Value'] >= min_value)
+    ].sort_values(by='AOV_Ratio', ascending=False)
+    
+    color_map = 'Greens'
+    metric_label = "Paus Terdeteksi"
+    
+else:
+    # Cari yang AOV Ratio Rendah (Kecil) TAPI Frekuensi Tinggi (Bukan saham sepi, tapi saham ramai ritel/split)
+    # Kita butuh data historical freq utk hitung spike, asumsi user sudah paham saham ramai.
+    # Disini kita filter simple: AOV kecil + Value Lumayan
+    suspects = df_daily[
+        (df_daily['AOV_Ratio'] <= max_ratio) & 
+        (df_daily['AOV_Ratio'] > 0) & # Hindari 0
+        (df_daily['Value'] >= min_value)
+    ].sort_values(by='AOV_Ratio', ascending=True) # Sort dari yang paling drop
+    
+    color_map = 'Reds_r' # Reverse red (makin kecil makin merah)
+    metric_label = "Split/Retail Terdeteksi"
 
-# SCREENER LOGIC
-# 1. Freq Spike Tinggi
-# 2. Split Order Terdeteksi (Anomaly Score)
-# 3. Value Transaksi Cukup (Bukan noise)
-suspects = df_daily[
-    (df_daily['Freq_Spike'] >= min_freq_spike) &
-    (df_daily['Anomaly_Score'] >= min_anomaly_score) &
-    (df_daily['Tx_Value'] >= min_tx_value)
-].sort_values(by='Freq_Spike', ascending=False)
+# --- METRICS ---
+c1, c2, c3 = st.columns(3)
+c1.metric("Tanggal Data", selected_date.strftime('%d %b %Y'))
+c2.metric("Total Emiten", len(df_daily))
+c3.metric(metric_label, len(suspects), delta_color="inverse")
 
-col3.metric("🚨 Suspect Ditemukan", f"{len(suspects)} Emiten", delta_color="inverse")
-
-# --- B. TABEL HASIL ---
-st.subheader("📋 Daftar Saham Terdeteksi (High Conviction)")
-
+# --- TABLE ---
+st.subheader(f"📋 Hasil Screener: {anomaly_type}")
 if not suspects.empty:
-    display_cols = ['Stock Code', 'Close', 'Change', 'Frequency', 'Freq_Spike', 'Vol_Spike', 'Anomaly_Score', 'Tx_Value']
+    cols = ['Stock Code', 'Close', 'Change %', 'Avg_Order_Volume', 'MA30_AOVol', 'AOV_Ratio', 'Value']
     
     st.dataframe(
-        suspects[display_cols].style.format({
+        suspects[cols].style.format({
             'Close': 'Rp {:,.0f}',
-            'Change': '{:,.0f}',
-            'Frequency': '{:,.0f}',
-            'Freq_Spike': '{:.1f}x',     # Berapa kali lipat
-            'Vol_Spike': '{:.1f}x',
-            'Anomaly_Score': '{:.2f} ⭐', # Semakin tinggi semakin valid
-            'Tx_Value': 'Rp {:,.0f}'
-        }).background_gradient(subset=['Freq_Spike'], cmap='Reds'),
+            'Change %': '{:.2f}%',
+            'Avg_Order_Volume': '{:,.1f} Lot',
+            'MA30_AOVol': '{:,.1f} Lot',
+            'AOV_Ratio': '{:.2f}x',
+            'Value': 'Rp {:,.0f}'
+        }).background_gradient(subset=['AOV_Ratio'], cmap=color_map),
         use_container_width=True
     )
 else:
-    st.info("Tidak ada anomali frekuensi yang signifikan pada tanggal ini. Coba turunkan threshold di sidebar.")
+    st.info("Tidak ada saham yang memenuhi kriteria filter.")
 
-# --- C. DEEP DIVE CHART ---
+# --- CHART ---
 st.divider()
-st.subheader("📈 Chart Analisis: Price vs Frequency Spike")
+st.subheader("📈 Deep Dive: Price vs Avg Order Volume")
 
-# Pilih Saham
 stock_list = suspects['Stock Code'].tolist() if not suspects.empty else df['Stock Code'].unique().tolist()
 selected_stock = st.selectbox("Pilih Saham:", stock_list)
 
-# Ambil Data Historis Saham Terpilih (90 Hari Terakhir)
-df_chart = df[df['Stock Code'] == selected_stock].tail(90).copy()
+df_chart = df[df['Stock Code'] == selected_stock].tail(120).copy() # 6 Bulan terakhir
 
 if not df_chart.empty:
-    # BUAT CHART PLOTLY
     fig = make_subplots(
         rows=2, cols=1, shared_xaxes=True, 
-        vertical_spacing=0.05, row_heights=[0.7, 0.3],
-        subplot_titles=(f"Price Action: {selected_stock}", "Frequency Analyzer (Spike Intensity)")
+        vertical_spacing=0.05, row_heights=[0.6, 0.4],
+        subplot_titles=(f"Price Action: {selected_stock}", "Avg Order Volume (Lot/Trade) vs MA30")
     )
 
-    # 1. Candlestick Price
+    # 1. Candlestick
     fig.add_trace(go.Candlestick(
         x=df_chart['Last Trading Date'],
         open=df_chart['Open Price'], high=df_chart['High'],
@@ -231,78 +209,37 @@ if not df_chart.empty:
         name='Price'
     ), row=1, col=1)
 
-    # VWMA Overlay
-    # Hitung VWMA simple untuk chart line
-    df_chart['TP'] = (df_chart['High'] + df_chart['Low'] + df_chart['Close']) / 3
-    df_chart['VP'] = df_chart['TP'] * df_chart['Volume']
-    df_chart['VWMA'] = df_chart['VP'].rolling(20).sum() / df_chart['Volume'].rolling(20).sum()
+    # 2. AOV Chart (Bar vs Line)
+    # Warna Bar: Hijau jika di atas MA30, Merah jika di bawah
+    colors = ['#00cc00' if val >= ma else '#ff4444' for val, ma in zip(df_chart['Avg_Order_Volume'], df_chart['MA30_AOVol'])]
 
-    fig.add_trace(go.Scatter(
-        x=df_chart['Last Trading Date'], y=df_chart['VWMA'],
-        line=dict(color='orange', width=1.5), name='VWMA 20'
-    ), row=1, col=1)
-
-    # 2. Logic Warna Bar (Frequency Analyzer)
-    # Ini logic kunci agar visualisasinya benar
-    bar_colors = []
-    hover_texts = []
-    
-    for idx, row in df_chart.iterrows():
-        # Kategori 1: BANDAR SPLIT (Merah)
-        # Freq naik tinggi, tapi Vol growth kalah jauh, dan Value valid
-        if (row['Freq_Spike'] >= min_freq_spike) and (row['Anomaly_Score'] >= min_anomaly_score) and (row['Tx_Value'] >= min_tx_value):
-            color = 'red'
-            status = "🚨 BANDAR SPLIT"
-        
-        # Kategori 2: RETAIL/NEWS FOMO (Oranye)
-        # Freq naik tinggi, Vol juga naik tinggi (Anomaly Score rendah ~1)
-        elif (row['Freq_Spike'] >= min_freq_spike):
-            color = 'orange'
-            status = "⚠️ RETAIL / NEWS"
-            
-        # Kategori 3: NORMAL / NOISE (Abu-abu)
-        else:
-            color = 'lightgray'
-            status = "Normal"
-            
-        bar_colors.append(color)
-        hover_texts.append(
-            f"<b>{status}</b><br>" +
-            f"Freq Spike: {row['Freq_Spike']:.2f}x<br>" +
-            f"Vol Spike: {row['Vol_Spike']:.2f}x<br>" +
-            f"Anomaly Score: {row['Anomaly_Score']:.2f}"
-        )
-
-    # Plot Bar Chart (Menggunakan Freq_Spike sebagai tinggi bar)
+    # Bar: Avg Order Volume Harian
     fig.add_trace(go.Bar(
         x=df_chart['Last Trading Date'],
-        y=df_chart['Freq_Spike'], # Plotting rasio lonjakan, bukan raw frequency
-        marker_color=bar_colors,
-        name='Anomaly Level',
-        hovertext=hover_texts,
-        hoverinfo="text"
+        y=df_chart['Avg_Order_Volume'],
+        marker_color=colors,
+        name='Avg Order Vol (Lot)',
+        hovertemplate='%{y:,.1f} Lot'
     ), row=2, col=1)
 
-    # Garis Threshold Merah
-    fig.add_hline(y=min_freq_spike, line_dash="dot", row=2, col=1, line_color="red", annotation_text="Threshold")
-    
-    # Layout
-    fig.update_layout(
-        xaxis_rangeslider_visible=False,
-        height=700,
-        showlegend=False,
-        hovermode='x unified',
-        bargap=0.2,
-        title_text=f"Analisis Detil: {selected_stock}"
-    )
-    
-    # Update Y-Axis Title
+    # Line: MA30 Benchmark
+    fig.add_trace(go.Scatter(
+        x=df_chart['Last Trading Date'],
+        y=df_chart['MA30_AOVol'],
+        line=dict(color='blue', width=2, dash='solid'),
+        name='MA30 Baseline',
+        hovertemplate='MA30: %{y:,.1f} Lot'
+    ), row=2, col=1)
+
+    fig.update_layout(height=700, xaxis_rangeslider_visible=False, hovermode='x unified')
     fig.update_yaxes(title_text="Harga", row=1, col=1)
-    fig.update_yaxes(title_text="Spike Ratio (x)", row=2, col=1)
+    fig.update_yaxes(title_text="Lot / Trade", row=2, col=1)
 
     st.plotly_chart(fig, use_container_width=True)
-
-    # Data Raw Table
-    with st.expander("Lihat Data Mentah (Last 5 Days)"):
-        cols_raw = ['Last Trading Date', 'Close', 'Frequency', 'Freq_Spike', 'Vol_Spike', 'Anomaly_Score', 'Tx_Value']
-        st.dataframe(df_chart[cols_raw].tail(5).sort_values(by='Last Trading Date', ascending=False))
+    
+    st.info("""
+    **Cara Baca Chart Bawah:**
+    * **Garis Biru:** Standar ukuran order rata-rata (MA30).
+    * **Bar Hijau Tinggi:** Order hari itu JAUH LEBIH BESAR dari biasanya (Whale Accumulation).
+    * **Bar Merah Pendek:** Order hari itu KECIL-KECIL dibanding biasanya (Ritel/Split Order).
+    """)
