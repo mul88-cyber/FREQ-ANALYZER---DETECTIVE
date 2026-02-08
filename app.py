@@ -73,12 +73,6 @@ st.markdown("""
         padding: 10px 20px;
         font-weight: 600;
     }
-    
-    /* Custom Divider */
-    .custom-divider {
-        border-top: 2px solid #e2e8f0;
-        margin: 25px 0;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -94,7 +88,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. LOAD DATA DARI GDRIVE (Dengan Caching yang Lebih Baik)
+# 2. LOAD DATA DARI GDRIVE
 # ==============================================================================
 FOLDER_ID = '1hX2jwUrAgi4Fr8xkcFWjCW6vbk6lsIlP'
 FILE_NAME = 'Kompilasi_Data_1Tahun.csv'
@@ -112,9 +106,9 @@ def get_drive_service():
         st.error(f"❌ Error Authentication: {e}")
         return None
 
-@st.cache_data(ttl=1800)  # Cache for 30 minutes
+@st.cache_data(ttl=1800)
 def load_data():
-    """Load and preprocess data with comprehensive error handling"""
+    """Load and preprocess data"""
     try:
         with st.spinner('🔄 Loading market data from Google Drive...'):
             service = get_drive_service()
@@ -125,9 +119,8 @@ def load_data():
             query = f"'{FOLDER_ID}' in parents and name='{FILE_NAME}' and trashed=false"
             results = service.files().list(
                 q=query, 
-                fields="files(id, name, modifiedTime)",
-                supportsAllDrives=True,
-                includeItemsFromAllDrives=True
+                fields="files(id, name)",
+                supportsAllDrives=True
             ).execute()
             
             files = results.get('files', [])
@@ -142,20 +135,11 @@ def load_data():
             file_bytes = io.BytesIO()
             downloader = MediaIoBaseDownload(file_bytes, request)
             
-            # Show download progress
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            status_text.text("📥 Downloading data...")
-            
             done = False
             while not done:
                 status, done = downloader.next_chunk()
-                if status:
-                    progress_bar.progress(int(status.progress() * 100))
             
             file_bytes.seek(0)
-            progress_bar.empty()
-            status_text.text("📊 Processing data...")
             
             # Load CSV
             df = pd.read_csv(file_bytes)
@@ -173,7 +157,6 @@ def load_data():
             
             for col in numeric_cols:
                 if col in df.columns:
-                    # Clean string values
                     if df[col].dtype == 'object':
                         df[col] = df[col].astype(str).str.replace(',', '').str.replace('Rp', '')
                     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
@@ -184,9 +167,9 @@ def load_data():
                 df.loc[mask, 'Change %'] = (df.loc[mask, 'Change'] / df.loc[mask, 'Previous']) * 100
                 df['Change %'] = df['Change %'].fillna(0)
             
-            # Calculate Value if not present or invalid
+            # Calculate Value if not present
             if 'Value' not in df.columns or (df['Value'] == 0).all():
-                df['Value'] = df['Close'] * df['Volume'] * 100  # Assuming 1 lot = 100 shares
+                df['Value'] = df['Close'] * df['Volume'] * 100
             
             # Calculate AOV Ratio
             if 'Avg_Order_Volume' in df.columns and 'MA30_AOVol' in df.columns:
@@ -200,7 +183,7 @@ def load_data():
             if all(col in df.columns for col in ['Foreign Buy', 'Foreign Sell']):
                 df['Net Foreign'] = df['Foreign Buy'] - df['Foreign Sell']
             
-            # Calculate Bid/Offer Imbalance if not present
+            # Calculate Bid/Offer Imbalance
             if all(col in df.columns for col in ['Bid Volume', 'Offer Volume']):
                 total = df['Bid Volume'] + df['Offer Volume']
                 df['Bid_Offer_Imbalance'] = np.where(
@@ -212,9 +195,6 @@ def load_data():
             # Add anomaly flags
             df['Whale_Signal'] = df['AOV_Ratio'] >= 1.5
             df['Split_Signal'] = (df['AOV_Ratio'] <= 0.6) & (df['AOV_Ratio'] > 0)
-            
-            progress_bar.empty()
-            status_text.empty()
             
             st.success(f"✅ Data loaded: {len(df):,} rows, {df['Stock Code'].nunique():,} stocks")
             
@@ -230,16 +210,14 @@ if df_raw is None:
     st.stop()
 
 # ==============================================================================
-# 3. DATA PREPARATION & GLOBAL VARIABLES
+# 3. DATA PREPARATION
 # ==============================================================================
 df = df_raw.sort_values(['Stock Code', 'Last Trading Date']).copy()
-
-# Get latest date
 latest_date = df['Last Trading Date'].max()
 latest_df = df[df['Last Trading Date'] == latest_date].copy()
 
 # ==============================================================================
-# 4. SIDEBAR - ENHANCED FILTERS
+# 4. SIDEBAR
 # ==============================================================================
 with st.sidebar:
     st.markdown("### ⚙️ Control Panel")
@@ -263,23 +241,20 @@ with st.sidebar:
         min_value=1.0,
         max_value=5.0,
         value=1.5,
-        step=0.1,
-        help="Minimum AOV_Ratio to classify as Whale"
+        step=0.1
     )
     
     min_value_rp = st.number_input(
         "Min Transaction Value (Rp)",
         value=5_000_000_000,
         step=1_000_000_000,
-        format="%d",
-        help="Minimum daily transaction value"
+        format="%d"
     )
     
     min_frequency = st.number_input(
         "Min Frequency",
         value=100,
-        step=50,
-        help="Minimum number of transactions"
+        step=50
     )
     
     st.markdown("---")
@@ -307,13 +282,12 @@ with st.sidebar:
     st.metric("Whales Detected", f"{whale_count:,}")
 
 # ==============================================================================
-# 5. MAIN DASHBOARD - ENHANCED TABS
+# 5. MAIN DASHBOARD - TABS
 # ==============================================================================
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3 = st.tabs([
     "📈 Deep Dive Analysis", 
     "🐋 Whale Screener", 
-    "📊 Market Overview",
-    "🔍 Pattern Detection"
+    "📊 Market Overview"
 ])
 
 # ==============================================================================
@@ -337,27 +311,24 @@ with tab1:
     
     if not stock_data.empty:
         last_row = stock_data.iloc[-1]
-        company_name = last_row['Company Name'] if 'Company Name' in last_row else selected_stock
+        company_name = last_row.get('Company Name', selected_stock)
         
         # Enhanced Status Card
-        aov_ratio = last_row['AOV_Ratio'] if 'AOV_Ratio' in last_row else 1
+        aov_ratio = last_row.get('AOV_Ratio', 1)
         
         # Calculate conviction score
         if aov_ratio >= min_whale_ratio:
             conviction_score = min(99, ((aov_ratio - min_whale_ratio) / (5 - min_whale_ratio)) * 80 + 20)
             card_class = "whale-card"
             status_text = "🐋 WHALE DETECTED"
-            status_color = "#00cc00"
         elif aov_ratio <= 0.6 and aov_ratio > 0:
             conviction_score = min(99, ((0.6 - aov_ratio) / 0.6) * 80 + 20)
             card_class = "split-card"
             status_text = "⚡ RETAIL/SPLIT DOMINANT"
-            status_color = "#ff4444"
         else:
             conviction_score = 50
             card_class = "neutral-card"
             status_text = "⚖️ NORMAL ACTIVITY"
-            status_color = "#718096"
         
         # Display enhanced status card
         st.markdown(f"""
@@ -369,7 +340,7 @@ with tab1:
                     <div class="small-text">AOV Ratio: {aov_ratio:.2f}x | Avg Lot: {last_row.get('Avg_Order_Volume', 0):,.0f}</div>
                 </div>
                 <div style="text-align: right;">
-                    <div class="medium-text">Rp {last_row['Close']:,.0f}</div>
+                    <div class="medium-text">Rp {last_row.get('Close', 0):,.0f}</div>
                     <div class="small-text" style="color: {'#00cc00' if last_row.get('Change %', 0) >= 0 else '#ff4444'}">
                         {last_row.get('Change %', 0):+.2f}%
                     </div>
@@ -379,7 +350,7 @@ with tab1:
         """, unsafe_allow_html=True)
         
         # ======================================================================
-        # ENHANCED COMBO CHART
+        # ENHANCED COMBO CHART - FIXED VERSION
         # ======================================================================
         fig = make_subplots(
             rows=3, cols=1,
@@ -387,7 +358,7 @@ with tab1:
             vertical_spacing=0.05,
             row_heights=[0.5, 0.25, 0.25],
             specs=[
-                [{"secondary_y": True}],
+                [{"secondary_y": False}],
                 [{"secondary_y": False}],
                 [{"secondary_y": False}]
             ]
@@ -408,9 +379,10 @@ with tab1:
             row=1, col=1
         )
         
-        # Whale Signals
+        # Whale Signals - FIXED: menggunakan proper customdata
         whale_signals = stock_data[stock_data['Whale_Signal']]
-        if not whale_signals.empty:
+        if not whale_signals.empty and 'High' in whale_signals.columns:
+            whale_customdata = whale_signals[['AOV_Ratio']].values
             fig.add_trace(
                 go.Scatter(
                     x=whale_signals['Last Trading Date'],
@@ -423,15 +395,16 @@ with tab1:
                         line=dict(width=2, color='black')
                     ),
                     name='Whale Signal',
-                    hovertemplate='<b>🐋 WHALE ENTRY</b><br>Date: %{x}<br>AOV Ratio: %{customdata:.2f}x<extra></extra>',
-                    customdata=whale_signals['AOV_Ratio']
+                    hovertemplate='<b>🐋 WHALE ENTRY</b><br>Date: %{x}<br>AOV Ratio: %{customdata[0]:.2f}x<extra></extra>',
+                    customdata=whale_customdata
                 ),
                 row=1, col=1
             )
         
-        # Split Signals
+        # Split Signals - FIXED: menggunakan proper customdata
         split_signals = stock_data[stock_data['Split_Signal']]
-        if not split_signals.empty:
+        if not split_signals.empty and 'Low' in split_signals.columns:
+            split_customdata = split_signals[['AOV_Ratio']].values
             fig.add_trace(
                 go.Scatter(
                     x=split_signals['Last Trading Date'],
@@ -444,8 +417,8 @@ with tab1:
                         line=dict(width=2, color='black')
                     ),
                     name='Split Signal',
-                    hovertemplate='<b>⚡ RETAIL DOMINANT</b><br>Date: %{x}<br>AOV Ratio: %{customdata:.2f}x<extra></extra>',
-                    customdata=split_signals['AOV_Ratio']
+                    hovertemplate='<b>⚡ RETAIL DOMINANT</b><br>Date: %{x}<br>AOV Ratio: %{customdata[0]:.2f}x<extra></extra>',
+                    customdata=split_customdata
                 ),
                 row=1, col=1
             )
@@ -460,6 +433,9 @@ with tab1:
             else:
                 vol_colors.append('#718096')
         
+        # FIXED: customdata untuk volume bar
+        volume_customdata = stock_data[['Avg_Order_Volume']].values
+        
         fig.add_trace(
             go.Bar(
                 x=stock_data['Last Trading Date'],
@@ -467,13 +443,18 @@ with tab1:
                 marker_color=vol_colors,
                 name='Volume',
                 opacity=0.7,
-                hovertemplate='<b>Volume</b>: %{y:,.0f} lots<br><b>Avg Lot</b>: %{customdata:,.0f}<extra></extra>',
-                customdata=stock_data['Avg_Order_Volume']
+                hovertemplate='<b>Volume</b>: %{y:,.0f} lots<br><b>Avg Lot</b>: %{customdata[0]:,.0f}<extra></extra>',
+                customdata=volume_customdata
             ),
             row=2, col=1
         )
         
-        # 3. AOV Ratio Line Chart
+        # 3. AOV Ratio Line Chart - FIXED: customdata sebagai array 2D
+        aov_customdata = np.column_stack([
+            stock_data['Avg_Order_Volume'].values,
+            stock_data['MA30_AOVol'].values
+        ])
+        
         fig.add_trace(
             go.Scatter(
                 x=stock_data['Last Trading Date'],
@@ -481,9 +462,8 @@ with tab1:
                 mode='lines+markers',
                 line=dict(color='#9c88ff', width=2),
                 name='AOV Ratio',
-                hovertemplate='<b>AOV Ratio</b>: %{y:.2f}x<br>Avg: %{customdata:.0f} | MA30: %{customdata2:.0f}<extra></extra>',
-                customdata=stock_data['Avg_Order_Volume'],
-                customdata2=stock_data['MA30_AOVol']
+                hovertemplate='<b>AOV Ratio</b>: %{y:.2f}x<br>Avg: %{customdata[0]:.0f} | MA30: %{customdata[1]:.0f}<extra></extra>',
+                customdata=aov_customdata
             ),
             row=3, col=1
         )
@@ -538,20 +518,22 @@ with tab1:
         metric_cols = st.columns(4)
         
         with metric_cols[0]:
-            st.markdown("""
+            daily_value = last_row.get('Value', 0)
+            st.markdown(f"""
             <div class="metric-card">
                 <div class="small-text">Daily Value</div>
-                <div class="value-text">Rp {value:,.0f}</div>
+                <div class="value-text">Rp {daily_value:,.0f}</div>
             </div>
-            """.format(value=last_row.get('Value', 0)), unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
         
         with metric_cols[1]:
-            st.markdown("""
+            frequency = last_row.get('Frequency', 0)
+            st.markdown(f"""
             <div class="metric-card">
                 <div class="small-text">Frequency</div>
-                <div class="value-text">{freq:,.0f}</div>
+                <div class="value-text">{frequency:,.0f}</div>
             </div>
-            """.format(freq=last_row.get('Frequency', 0)), unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
         
         with metric_cols[2]:
             if 'Net Foreign' in last_row:
@@ -663,128 +645,138 @@ with tab2:
     # Get data for selected date
     df_daily = df[df['Last Trading Date'] == selected_date].copy()
     
-    # Apply filters
-    filters_applied = []
-    
-    # Whale filter
-    whale_filter = (df_daily['AOV_Ratio'] >= min_whale_ratio)
-    filters_applied.append(f"AOV Ratio ≥ {min_whale_ratio}x")
-    
-    # Value filter
-    value_filter = (df_daily['Value'] >= min_value_rp)
-    filters_applied.append(f"Value ≥ Rp {min_value_rp:,.0f}")
-    
-    # Frequency filter
-    freq_filter = (df_daily['Frequency'] >= min_frequency)
-    filters_applied.append(f"Frequency ≥ {min_frequency}")
-    
-    # Sector filter
-    if 'selected_sector' in locals() and selected_sector != 'All':
-        sector_filter = (df_daily['Sector'] == selected_sector)
-        filters_applied.append(f"Sector = {selected_sector}")
+    if df_daily.empty:
+        st.warning(f"No data available for {selected_date.strftime('%d %b %Y')}")
     else:
-        sector_filter = pd.Series([True] * len(df_daily))
-    
-    # Combine filters
-    mask = whale_filter & value_filter & freq_filter & sector_filter
-    suspects = df_daily[mask].copy()
-    
-    # Display filter summary
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="medium-text">Filters Applied:</div>
-        <div class="small-text">{' • '.join(filters_applied)}</div>
-        <div class="value-text">{len(suspects)} stocks detected</div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    if not suspects.empty:
-        # Sort by conviction
-        suspects['Conviction_Score'] = ((suspects['AOV_Ratio'] - min_whale_ratio) / (5 - min_whale_ratio)) * 80 + 20
-        suspects['Conviction_Score'] = suspects['Conviction_Score'].clip(0, 100)
-        suspects = suspects.sort_values('Conviction_Score', ascending=False)
+        # Apply filters
+        filters_applied = []
         
-        # Display results
-        display_cols = [
-            'Stock Code', 'Company Name', 'Close', 'Change %', 'Volume',
-            'Avg_Order_Volume', 'AOV_Ratio', 'Conviction_Score', 'Value',
-            'Frequency'
-        ]
+        # Whale filter
+        whale_filter = (df_daily['AOV_Ratio'] >= min_whale_ratio)
+        filters_applied.append(f"AOV Ratio ≥ {min_whale_ratio}x")
         
-        # Add sector if available
-        if 'Sector' in suspects.columns:
-            display_cols.append('Sector')
+        # Value filter
+        value_filter = (df_daily['Value'] >= min_value_rp)
+        filters_applied.append(f"Value ≥ Rp {min_value_rp:,.0f}")
         
-        # Add net foreign if available
-        if 'Net Foreign' in suspects.columns:
-            display_cols.append('Net Foreign')
+        # Frequency filter
+        freq_filter = (df_daily['Frequency'] >= min_frequency)
+        filters_applied.append(f"Frequency ≥ {min_frequency}")
         
-        display_df = suspects[display_cols].copy()
+        # Sector filter
+        if 'selected_sector' in locals() and selected_sector != 'All':
+            sector_filter = (df_daily['Sector'] == selected_sector)
+            filters_applied.append(f"Sector = {selected_sector}")
+        else:
+            sector_filter = pd.Series([True] * len(df_daily))
         
-        # Format display
-        formatted_df = display_df.style.format({
-            'Close': 'Rp {:,.0f}',
-            'Change %': '{:+.2f}%',
-            'Volume': '{:,.0f}',
-            'Avg_Order_Volume': '{:,.0f}',
-            'AOV_Ratio': '{:.2f}x',
-            'Conviction_Score': '{:.0f}%',
-            'Value': 'Rp {:,.0f}',
-            'Frequency': '{:,.0f}',
-            'Net Foreign': 'Rp {:,.0f}'
-        })
+        # Combine filters
+        mask = whale_filter & value_filter & freq_filter & sector_filter
+        suspects = df_daily[mask].copy()
         
-        # Apply color gradient
-        formatted_df = formatted_df.background_gradient(
-            subset=['AOV_Ratio', 'Conviction_Score'],
-            cmap='Greens'
-        )
+        # Display filter summary
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="medium-text">Filters Applied:</div>
+            <div class="small-text">{' • '.join(filters_applied)}</div>
+            <div class="value-text">{len(suspects)} stocks detected</div>
+        </div>
+        """, unsafe_allow_html=True)
         
-        # Highlight positive/negative changes
-        formatted_df = formatted_df.applymap(
-            lambda x: 'color: #00cc00' if isinstance(x, str) and '+' in x and '%' in x else 
-                     ('color: #ff4444' if isinstance(x, str) and '-' in x and '%' in x else ''),
-            subset=['Change %']
-        )
-        
-        st.dataframe(
-            formatted_df,
-            use_container_width=True,
-            height=600
-        )
-        
-        # Download option
-        csv = suspects.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Download Whale List",
-            data=csv,
-            file_name=f"whale_detection_{selected_date.strftime('%Y%m%d')}.csv",
-            mime="text/csv"
-        )
-        
-        # Top 3 whales visualization
-        st.markdown("### 🏆 Top Whales")
-        
-        if len(suspects) >= 3:
-            top_whales = suspects.head(3)
+        if not suspects.empty:
+            # Sort by conviction
+            suspects['Conviction_Score'] = ((suspects['AOV_Ratio'] - min_whale_ratio) / (5 - min_whale_ratio)) * 80 + 20
+            suspects['Conviction_Score'] = suspects['Conviction_Score'].clip(0, 100)
+            suspects = suspects.sort_values('Conviction_Score', ascending=False)
             
-            cols = st.columns(3)
-            for idx, (_, whale) in enumerate(top_whales.iterrows()):
-                with cols[idx]:
-                    st.markdown(f"""
-                    <div class="whale-card">
-                        <div class="big-text">{whale['Stock Code']}</div>
-                        <div class="medium-text">{whale['Company Name'][:30]}{'...' if len(whale['Company Name']) > 30 else ''}</div>
-                        <div class="value-text">Rp {whale['Close']:,.0f}</div>
-                        <div class="small-text">
-                            AOV Ratio: <b>{whale['AOV_Ratio']:.2f}x</b><br>
-                            Conviction: <b>{whale['Conviction_Score']:.0f}%</b><br>
-                            Volume: {whale['Volume']:,.0f} lots
+            # Display results
+            display_cols = [
+                'Stock Code', 'Close', 'Change %', 'Volume',
+                'Avg_Order_Volume', 'AOV_Ratio', 'Conviction_Score', 'Value',
+                'Frequency'
+            ]
+            
+            # Add company name if available
+            if 'Company Name' in suspects.columns:
+                display_cols.insert(1, 'Company Name')
+            
+            # Add sector if available
+            if 'Sector' in suspects.columns:
+                display_cols.append('Sector')
+            
+            display_df = suspects[display_cols].copy()
+            
+            # Format display
+            styled_df = display_df.style.format({
+                'Close': 'Rp {:,.0f}',
+                'Change %': '{:+.2f}%',
+                'Volume': '{:,.0f}',
+                'Avg_Order_Volume': '{:,.0f}',
+                'AOV_Ratio': '{:.2f}x',
+                'Conviction_Score': '{:.0f}%',
+                'Value': 'Rp {:,.0f}',
+                'Frequency': '{:,.0f}'
+            })
+            
+            # Apply color gradient
+            styled_df = styled_df.background_gradient(
+                subset=['AOV_Ratio', 'Conviction_Score'],
+                cmap='Greens'
+            )
+            
+            # Highlight positive/negative changes
+            def color_change(val):
+                if isinstance(val, str):
+                    if '+' in val and '%' in val:
+                        return 'color: #00cc00'
+                    elif '-' in val and '%' in val:
+                        return 'color: #ff4444'
+                return ''
+            
+            styled_df = styled_df.map(color_change, subset=['Change %'])
+            
+            st.dataframe(
+                styled_df,
+                use_container_width=True,
+                height=600
+            )
+            
+            # Download option
+            csv = suspects.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download Whale List",
+                data=csv,
+                file_name=f"whale_detection_{selected_date.strftime('%Y%m%d')}.csv",
+                mime="text/csv"
+            )
+            
+            # Top 3 whales visualization
+            st.markdown("### 🏆 Top Whales")
+            
+            if len(suspects) >= 3:
+                top_whales = suspects.head(3)
+                
+                cols = st.columns(3)
+                for idx, (_, whale) in enumerate(top_whales.iterrows()):
+                    with cols[idx]:
+                        company_display = whale.get('Company Name', 'N/A')
+                        if isinstance(company_display, str) and len(company_display) > 30:
+                            company_display = company_display[:30] + '...'
+                        
+                        st.markdown(f"""
+                        <div class="whale-card">
+                            <div class="big-text">{whale['Stock Code']}</div>
+                            <div class="medium-text">{company_display}</div>
+                            <div class="value-text">Rp {whale.get('Close', 0):,.0f}</div>
+                            <div class="small-text">
+                                AOV Ratio: <b>{whale.get('AOV_Ratio', 0):.2f}x</b><br>
+                                Conviction: <b>{whale.get('Conviction_Score', 0):.0f}%</b><br>
+                                Volume: {whale.get('Volume', 0):,.0f} lots
+                            </div>
                         </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-    else:
-        st.info("🚫 No whales detected with current filters. Try adjusting parameters.")
+                        """, unsafe_allow_html=True)
+        else:
+            st.info("🚫 No whales detected with current filters. Try adjusting parameters.")
 
 # ==============================================================================
 # TAB 3: MARKET OVERVIEW
@@ -798,64 +790,71 @@ with tab3:
         # Market heatmap
         st.markdown("#### 🔥 Market Heatmap")
         
-        # Create sector performance
         if 'Sector' in df.columns and 'Change %' in df.columns:
-            sector_perf = latest_df.groupby('Sector').agg({
+            # Use latest date data
+            sector_data = latest_df.copy()
+            sector_perf = sector_data.groupby('Sector').agg({
                 'Change %': 'mean',
                 'Stock Code': 'count'
             }).reset_index()
             sector_perf.columns = ['Sector', 'Avg Change %', 'Stock Count']
             
-            fig = px.treemap(
-                sector_perf,
-                path=['Sector'],
-                values='Stock Count',
-                color='Avg Change %',
-                color_continuous_scale='RdYlGn',
-                color_continuous_midpoint=0,
-                title='Sector Performance'
-            )
-            fig.update_layout(height=400)
-            st.plotly_chart(fig, use_container_width=True)
+            if not sector_perf.empty:
+                fig = px.treemap(
+                    sector_perf,
+                    path=['Sector'],
+                    values='Stock Count',
+                    color='Avg Change %',
+                    color_continuous_scale='RdYlGn',
+                    color_continuous_midpoint=0
+                )
+                fig.update_layout(height=400)
+                st.plotly_chart(fig, use_container_width=True)
     
     with col2:
         # Whale distribution
         st.markdown("#### 🐋 Whale Distribution")
         
-        whale_daily = df.groupby(df['Last Trading Date'].dt.date).apply(
-            lambda x: (x['AOV_Ratio'] >= min_whale_ratio).sum()
-        ).reset_index()
-        whale_daily.columns = ['Date', 'Whale Count']
+        # Get last 30 days data
+        last_30_days = df[df['Last Trading Date'] >= (latest_date - timedelta(days=30))]
         
-        fig = px.area(
-            whale_daily.tail(30),
-            x='Date',
-            y='Whale Count',
-            title='Whale Activity (30 Days)',
-            color_discrete_sequence=['#00cc00']
-        )
-        fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        if not last_30_days.empty:
+            whale_daily = last_30_days.groupby(last_30_days['Last Trading Date'].dt.date).apply(
+                lambda x: (x['AOV_Ratio'] >= min_whale_ratio).sum()
+            ).reset_index()
+            whale_daily.columns = ['Date', 'Whale Count']
+            
+            if not whale_daily.empty:
+                fig = px.area(
+                    whale_daily,
+                    x='Date',
+                    y='Whale Count',
+                    title='Whale Activity (30 Days)',
+                    color_discrete_sequence=['#00cc00']
+                )
+                fig.update_layout(height=400)
+                st.plotly_chart(fig, use_container_width=True)
     
     with col3:
         # AOV Ratio distribution
         st.markdown("#### 📈 AOV Ratio Distribution")
         
-        fig = px.histogram(
-            latest_df,
-            x='AOV_Ratio',
-            nbins=30,
-            title='Distribution of AOV Ratios',
-            color_discrete_sequence=['#9c88ff']
-        )
-        fig.add_vline(
-            x=min_whale_ratio,
-            line_dash="dash",
-            line_color="#00cc00",
-            annotation_text="Whale Threshold"
-        )
-        fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        if not latest_df.empty and 'AOV_Ratio' in latest_df.columns:
+            fig = px.histogram(
+                latest_df,
+                x='AOV_Ratio',
+                nbins=30,
+                title='Distribution of AOV Ratios',
+                color_discrete_sequence=['#9c88ff']
+            )
+            fig.add_vline(
+                x=min_whale_ratio,
+                line_dash="dash",
+                line_color="#00cc00",
+                annotation_text="Whale Threshold"
+            )
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
     
     # Market statistics
     st.markdown("### 📊 Market Statistics")
@@ -863,93 +862,23 @@ with tab3:
     stat_cols = st.columns(4)
     
     with stat_cols[0]:
-        total_volume = latest_df['Volume'].sum()
+        total_volume = latest_df['Volume'].sum() if not latest_df.empty else 0
         st.metric("Total Volume", f"{total_volume:,.0f} lots")
     
     with stat_cols[1]:
-        avg_aov = latest_df['AOV_Ratio'].mean()
+        avg_aov = latest_df['AOV_Ratio'].mean() if not latest_df.empty else 0
         st.metric("Avg AOV Ratio", f"{avg_aov:.2f}x")
     
     with stat_cols[2]:
-        whale_percentage = (len(latest_df[latest_df['AOV_Ratio'] >= min_whale_ratio]) / len(latest_df)) * 100
-        st.metric("Whale %", f"{whale_percentage:.1f}%")
+        if not latest_df.empty:
+            whale_count_today = len(latest_df[latest_df['AOV_Ratio'] >= min_whale_ratio])
+            whale_percentage = (whale_count_today / len(latest_df)) * 100 if len(latest_df) > 0 else 0
+            st.metric("Whale % Today", f"{whale_percentage:.1f}%")
     
     with stat_cols[3]:
-        if 'Net Foreign' in latest_df.columns:
+        if 'Net Foreign' in latest_df.columns and not latest_df.empty:
             total_net_foreign = latest_df['Net Foreign'].sum()
             st.metric("Total Net Foreign", f"Rp {total_net_foreign:,.0f}")
-
-# ==============================================================================
-# TAB 4: PATTERN DETECTION
-# ==============================================================================
-with tab4:
-    st.markdown("### 🔍 Advanced Pattern Detection")
-    
-    # Pattern selection
-    pattern_type = st.selectbox(
-        "Select Pattern to Detect",
-        [
-            "Whale Accumulation at Bottom",
-            "Whale Distribution at Top",
-            "Retail Panic Selling",
-            "Silent Accumulation"
-        ]
-    )
-    
-    # Pattern detection logic
-    if pattern_type == "Whale Accumulation at Bottom":
-        st.info("""
-        **Pattern Criteria:**
-        1. Whale Signal (AOV Ratio ≥ 1.5x)
-        2. Price near 30-day low (bottom 30%)
-        3. Above average volume
-        4. Positive price action in next 5 days
-        """)
-        
-        # Implementation would go here
-        st.warning("Pattern detection logic to be implemented based on historical data")
-    
-    elif pattern_type == "Whale Distribution at Top":
-        st.info("""
-        **Pattern Criteria:**
-        1. Whale Signal (AOV Ratio ≥ 1.5x)
-        2. Price near 30-day high (top 30%)
-        3. High volume but price rejection
-        4. Negative price action in next 5 days
-        """)
-        
-    # Pattern visualization example
-    st.markdown("### 📊 Pattern Visualization")
-    
-    # Example pattern chart
-    fig = go.Figure()
-    
-    # Add pattern zones
-    fig.add_vrect(
-        x0="2024-01-01", x1="2024-01-15",
-        fillcolor="#00cc00", opacity=0.1,
-        layer="below", line_width=0,
-        annotation_text="Accumulation Zone",
-        annotation_position="top left"
-    )
-    
-    fig.add_vrect(
-        x0="2024-01-16", x1="2024-01-31",
-        fillcolor="#ff4444", opacity=0.1,
-        layer="below", line_width=0,
-        annotation_text="Distribution Zone",
-        annotation_position="top right"
-    )
-    
-    fig.update_layout(
-        height=400,
-        title="Example: Accumulation & Distribution Pattern",
-        xaxis_title="Date",
-        yaxis_title="Price",
-        showlegend=False
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
 
 # ==============================================================================
 # 6. FOOTER
