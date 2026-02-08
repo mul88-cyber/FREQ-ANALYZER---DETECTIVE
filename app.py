@@ -625,122 +625,194 @@ with tab2:
             )
 
 # ==============================================================================
-# TAB 3: BLUECHIP RADAR (NEW FEATURE!)
+# TAB 3: BLUECHIP RADAR (PRO: DUAL MODE + PRICE CONTEXT)
 # ==============================================================================
 with tab3:
     st.markdown("### 💎 Bluechip Radar (Big Caps Only)")
     st.markdown("""
     <div class="bluechip-card">
-        <b>Strategi Bluechip:</b> Mendeteksi arus dana institusi/asing pada saham berkapitalisasi besar.
-        Parameter disesuaikan: AOV Ratio > 1.25x (Lebih sensitif) dan Filter Likuiditas Tinggi.
+        <b>Strategi Bluechip Pro:</b> Melacak arus dana Institusi & Asing pada saham likuid.
+        Fitur baru: Bisa scan periode (akumulasi mingguan/bulanan) dan filter kondisi harga.
     </div>
     """, unsafe_allow_html=True)
     
-    # 1. Filter Khusus Bluechip
-    col_bc1, col_bc2, col_bc3 = st.columns(3)
-    
-    with col_bc1:
-        bc_date_val = st.date_input("Tanggal Pantau", max_date, key="bc_date")
-        bc_date = pd.to_datetime(bc_date_val)
-        
-    with col_bc2:
-        # Filter Value Besar (Indikasi Big Cap)
-        min_bc_value = st.number_input("Min. Transaksi Harian (Rp)", value=20_000_000_000, step=5_000_000_000, format="%d", help="Default 20 Miliar untuk menyaring saham kecil.")
-        
-    with col_bc3:
-        # Sensitivitas AOV
-        bc_aov_threshold = st.slider("AOV Ratio Threshold", 1.1, 2.0, 1.25, 0.05, help="Bluechip susah gerak, 1.25x sudah signifikan.")
+    # --- 1. SETTINGS CONTAINER ---
+    with st.container(border=True):
+        # A. Mode Scanning
+        bc_scan_mode = st.radio(
+            "Metode Scanning:",
+            ("📸 Daily Snapshot (Harian)", "🗓️ Period Scanner (Rentang Waktu)"),
+            horizontal=True,
+            key="bc_scan_mode"
+        )
+        st.divider()
 
-    # 2. Logic Bluechip Detection
-    df_bc = df[df['Last Trading Date'] == bc_date].copy()
-    
-    # --- PENTING: HITUNG KOLOM KHUSUS BLUECHIP JIKA BELUM ADA ---
+        col_bc1, col_bc2, col_bc3 = st.columns(3)
+        
+        with col_bc1:
+            if bc_scan_mode == "📸 Daily Snapshot (Harian)":
+                st.markdown("#### 📅 Tanggal Pantau")
+                bc_date_val = st.date_input("Pilih Tanggal", max_date, key="bc_date_daily")
+                bc_date = pd.to_datetime(bc_date_val)
+            else:
+                st.markdown("#### ⏳ Rentang Waktu")
+                bc_period = st.selectbox("Analisa Data Terakhir:", [5, 10, 20, 60], index=1, format_func=lambda x: f"{x} Hari Kerja", key="bc_period")
+                bc_start_date = max_date - timedelta(days=bc_period * 1.5)
+
+        with col_bc2:
+            st.markdown("#### 💰 Min. Transaksi (Likuiditas)")
+            min_bc_value = st.number_input("Rp (Miliar)", value=20_000_000_000, step=5_000_000_000, format="%d", help="Saring saham kecil.")
+        
+        with col_bc3:
+            st.markdown("#### 🎯 Sensitivitas AOV")
+            bc_aov_threshold = st.slider("Min. AOV Ratio", 1.1, 2.0, 1.25, 0.05, key="bc_threshold", help="1.25x sudah cukup signifikan untuk Bluechip.")
+
+    # --- 2. PRICE CONTEXT FILTER ---
+    st.markdown("#### 📉 Kondisi Harga (Price Context)")
+    bc_price_cond = st.selectbox(
+        "Filter Kondisi Harga:",
+        [
+            "🔍 SEMUA FASE (Tampilkan Semua)",
+            "💎 HIDDEN GEM (Sideways/Datar)", 
+            "⚓ BOTTOM FISHING (Lagi Turun/Downtrend)",
+            "🚀 EARLY MOVE (Baru Mulai Naik)"
+        ],
+        key="bc_price_cond"
+    )
+
+    # --- 3. DATA PREPARATION ---
+    if bc_scan_mode == "📸 Daily Snapshot (Harian)":
+        df_bc = df[df['Last Trading Date'] == bc_date].copy()
+    else:
+        df_bc = df[df['Last Trading Date'] >= bc_start_date].copy()
+
+    # --- 4. DATA ENRICHMENT (CEK KOLOM) ---
     # Net Foreign
     if 'Net Foreign' not in df_bc.columns:
         if 'Foreign Buy' in df_bc.columns and 'Foreign Sell' in df_bc.columns:
             df_bc['Net Foreign'] = df_bc['Foreign Buy'] - df_bc['Foreign Sell']
         else:
-            df_bc['Net Foreign'] = 0 # Default 0 jika data asing tidak ada
+            df_bc['Net Foreign'] = 0 
 
     # Value Ratio (Spike Uang Masuk)
-    # Kita butuh data historis global untuk hitung MA20 Value, jadi idealnya sudah dihitung di Global Calculation.
-    # Tapi untuk safety, kita cek di sini.
     if 'Value_Ratio' not in df_bc.columns:
-        # Jika kolom belum ada di df utama, kita tidak bisa hitung on-the-fly hanya dengan data 1 hari.
-        # Solusi: Beri nilai 0 atau ambil dari df global jika memungkinkan.
-        # TAPI, karena df global sudah di-load di awal, harusnya kita pastikan hitungan ini ada di Global Calculation (Section 3).
-        # Cek section Global Calculation Anda, pastikan baris ini ada:
-        # df['MA20_Value'] = df.groupby('Stock Code')['Value'].transform(lambda x: x.rolling(20, min_periods=1).mean())
-        # df['Value_Ratio'] = np.where(df['MA20_Value'] > 0, df['Value'] / df['MA20_Value'], 0)
-        
-        # Fallback jika lupa taruh di global:
         df_bc['Value_Ratio'] = 0 
 
+    # --- 5. FILTERING LOGIC ---
     # Filter Utama: Value Besar + AOV agak naik
     bc_suspects = df_bc[
         (df_bc['Value'] >= min_bc_value) & 
         (df_bc['AOV_Ratio'] >= bc_aov_threshold)
-    ].sort_values(by='Value', ascending=False)
-    
+    ]
+
+    # Filter Price Context
     if not bc_suspects.empty:
-        st.success(f"Ditemukan {len(bc_suspects)} Saham Big Caps dengan aktivitas institusi.")
-        
-        # Kolom Khusus Bluechip (Pastikan nama kolom sesuai persis dengan dataframe)
-        desired_cols_bc = ['Stock Code', 'Close', 'Change %', 'Net Foreign', 'Value', 'Value_Ratio', 'AOV_Ratio', 'Avg_Order_Volume']
-        
-        # Filter hanya kolom yang BENAR-BENAR ADA untuk mencegah KeyError
-        cols_bc = [c for c in desired_cols_bc if c in bc_suspects.columns]
-        
-        # Styling Khusus
-        styled_bc = bc_suspects[cols_bc].style
-        
-        # Highlight Foreign Flow (Cek dulu kolomnya ada atau tidak)
-        if 'Net Foreign' in bc_suspects.columns:
-            def color_foreign(val):
-                if val > 1_000_000_000: return 'color: #00cc00; font-weight: bold' # Asing beli > 1M
-                if val < -1_000_000_000: return 'color: #ff4444; font-weight: bold' # Asing jual > 1M
-                return 'color: gray'
-            styled_bc = styled_bc.map(color_foreign, subset=['Net Foreign'])
-        
-        # Highlight Value Spike (Uang Masuk)
-        if 'Value_Ratio' in bc_suspects.columns:
-            def color_val_ratio(val):
-                if val > 1.5: return 'background-color: #e3f2fd; color: #2962ff; font-weight: bold'
-                return ''
-            styled_bc = styled_bc.map(color_val_ratio, subset=['Value_Ratio'])
+        # VWMA Logic (On the fly check)
+        if 'VWMA_20D' not in bc_suspects.columns:
+             bc_suspects['TP'] = (bc_suspects['High'] + bc_suspects['Low'] + bc_suspects['Close']) / 3
+             bc_suspects['VP'] = bc_suspects['TP'] * bc_suspects['Volume']
+             bc_suspects['VWMA_20D'] = bc_suspects.groupby('Stock Code')['VP'].transform(lambda x: x.rolling(20).sum() / x.rolling(20).sum())
 
-        if 'AOV_Ratio' in bc_suspects.columns:
+        if bc_price_cond == "💎 HIDDEN GEM (Sideways/Datar)":
+            bc_suspects = bc_suspects[(bc_suspects['Change %'] >= -2.0) & (bc_suspects['Change %'] <= 2.0)]
+        elif bc_price_cond == "⚓ BOTTOM FISHING (Lagi Turun/Downtrend)":
+            bc_suspects = bc_suspects[(bc_suspects['Close'] < bc_suspects['VWMA_20D']) | (bc_suspects['Change %'] < 0)]
+        elif bc_price_cond == "🚀 EARLY MOVE (Baru Mulai Naik)":
+            bc_suspects = bc_suspects[(bc_suspects['Change %'] > 0) & (bc_suspects['Change %'] <= 4.0)]
+
+    # --- 6. DISPLAY RESULTS ---
+    if not bc_suspects.empty:
+        
+        # === A. TAMPILAN HARIAN ===
+        if bc_scan_mode == "📸 Daily Snapshot (Harian)":
+            bc_suspects = bc_suspects.sort_values(by='Value', ascending=False)
+            
+            st.success(f"Ditemukan {len(bc_suspects)} Bluechip Potensial (Fase: {bc_price_cond})")
+            
+            cols_bc = ['Stock Code', 'Close', 'Change %', 'Net Foreign', 'Value', 'Value_Ratio', 'AOV_Ratio', 'Avg_Order_Volume']
+            valid_cols = [c for c in cols_bc if c in bc_suspects.columns]
+            
+            styled_bc = bc_suspects[valid_cols].style
+            
+            # Highlight Logic
+            if 'Net Foreign' in bc_suspects.columns:
+                def color_foreign(val):
+                    if val > 5_000_000_000: return 'color: #00cc00; font-weight: bold' # Asing Beli > 5M
+                    if val < -5_000_000_000: return 'color: #ff4444; font-weight: bold' # Asing Jual > 5M
+                    return 'color: gray'
+                styled_bc = styled_bc.map(color_foreign, subset=['Net Foreign'])
+            
+            if 'Value_Ratio' in bc_suspects.columns:
+                def color_val(val):
+                    if val > 1.5: return 'background-color: #e3f2fd; color: #2962ff; font-weight: bold'
+                    return ''
+                styled_bc = styled_bc.map(color_val, subset=['Value_Ratio'])
+
             styled_bc = styled_bc.background_gradient(subset=['AOV_Ratio'], cmap='Blues', vmin=1.0, vmax=2.0)
-        
-        # Formatting String
-        format_dict = {
-            'Close': 'Rp {:,.0f}',
-            'Change %': '{:+.2f}%',
-            'Value': 'Rp {:,.0f}',
-            'Avg_Order_Volume': '{:,.0f}'
-        }
-        if 'Net Foreign' in bc_suspects.columns: format_dict['Net Foreign'] = 'Rp {:,.0f}'
-        if 'Value_Ratio' in bc_suspects.columns: format_dict['Value_Ratio'] = '{:.1f}x'
-        if 'AOV_Ratio' in bc_suspects.columns: format_dict['AOV_Ratio'] = '{:.2f}x'
+            
+            # Formatting
+            format_dict = {'Close': 'Rp {:,.0f}', 'Change %': '{:+.2f}%', 'Value': 'Rp {:,.0f}', 'Avg_Order_Volume': '{:,.0f}', 'Net Foreign': 'Rp {:,.0f}', 'Value_Ratio': '{:.1f}x', 'AOV_Ratio': '{:.2f}x'}
+            styled_bc = styled_bc.format({k: v for k, v in format_dict.items() if k in valid_cols})
 
-        styled_bc = styled_bc.format(format_dict)
-        
-        st.dataframe(
-            styled_bc,
-            use_container_width=True,
-            column_config={
-                'Stock Code': st.column_config.TextColumn("Kode"),
-                'Net Foreign': st.column_config.Column("Asing (Net)"),
-                'Value_Ratio': st.column_config.Column("Ledakan Value", help="Hari ini vs Rata2 20 Hari. >1.5x berarti uang masuk deras."),
-                'AOV_Ratio': st.column_config.Column("AOV Score")
-            },
-            hide_index=True
-        )
-        
-        st.caption("💡 **Tips:** Fokus pada saham dengan **Net Foreign Hijau** (Asing Masuk) dan **Value Ratio > 1.5x** (Uang Deras).")
-        
+            st.dataframe(styled_bc, use_container_width=True, hide_index=True)
+
+        # === B. TAMPILAN PERIODE (AGGREGATION) ===
+        else:
+            st.info(f"📊 Statistik Big Caps selama **{bc_period} hari terakhir**. Mencari akumulasi konsisten.")
+            
+            # Agregasi Data
+            # Kita hitung Total Net Foreign selama periode tersebut (Akumulasi Asing)
+            summary = bc_suspects.groupby(['Stock Code', 'Company Name']).agg(
+                Freq_Muncul=('Last Trading Date', 'count'),
+                Total_Net_Foreign=('Net Foreign', 'sum'), # Penting: Total Akumulasi Asing
+                Avg_Value=('Value', 'mean'),
+                Avg_AOV_Ratio=('AOV_Ratio', 'mean'),
+                Last_Close=('Close', 'last'),
+                Avg_Change=('Change %', 'mean')
+            ).reset_index()
+            
+            # Sortir berdasarkan Total Net Foreign (Asing Paling Banyak Masuk)
+            summary = summary.sort_values(by='Total_Net_Foreign', ascending=False).head(50)
+            
+            # Metrics
+            c1, c2 = st.columns(2)
+            c1.metric("Emiten Terdeteksi", len(summary))
+            top_foreign = summary.iloc[0]
+            c2.metric(f"Top Foreign Flow ({top_foreign['Stock Code']})", f"Rp {top_foreign['Total_Net_Foreign']/1e9:,.1f} M")
+
+            # Styling Summary
+            styled_sum = summary.style
+            
+            # Highlight Asing
+            def color_sum_foreign(val):
+                if val > 0: return 'color: #00cc00; font-weight: bold'
+                return 'color: #ff4444'
+            styled_sum = styled_sum.map(color_sum_foreign, subset=['Total_Net_Foreign'])
+            
+            styled_sum = styled_sum.background_gradient(subset=['Freq_Muncul'], cmap='Blues')
+            
+            styled_sum = styled_sum.format({
+                'Total_Net_Foreign': 'Rp {:,.0f}',
+                'Avg_Value': 'Rp {:,.0f}',
+                'Avg_AOV_Ratio': '{:.2f}x',
+                'Last_Close': 'Rp {:,.0f}',
+                'Avg_Change': '{:+.2f}%'
+            })
+            
+            st.dataframe(
+                styled_sum,
+                use_container_width=True,
+                column_config={
+                    "Total_Net_Foreign": st.column_config.Column("Total Asing (Net)", help="Total Net Buy/Sell Asing selama periode ini."),
+                    "Freq_Muncul": st.column_config.Column("Freq Anomali", help="Berapa hari terdeteksi AOV tinggi."),
+                    "Avg_Value": st.column_config.Column("Rata2 Transaksi")
+                },
+                hide_index=True
+            )
+            st.caption("💡 **Tips:** Di mode periode, urutan otomatis berdasarkan **Total Net Buy Asing**. Cari saham dengan Asing Hijau Besar tapi Avg Change kecil (Akumulasi).")
+
     else:
-        st.info("Tidak ada Big Caps yang memenuhi kriteria radar hari ini.")
+        st.warning(f"Tidak ditemukan Bluechip dengan kriteria: **{bc_price_cond}**.")
 
 # ==============================================================================
 # TAB 4: RESEARCH LAB (Backtesting)
