@@ -608,17 +608,505 @@ with tab1:
                 </div>
                 """, unsafe_allow_html=True)
 
-# State management
-if 'filters_expanded' not in st.session_state:
-    st.session_state.filters_expanded = True
-
-# Toggle button dengan label dinamis
-if st.button(
-    "📊 Tampilkan Filter" if not st.session_state.filters_expanded else "📉 Sembunyikan Filter",
-    key="toggle_filters"
-):
-    st.session_state.filters_expanded = not st.session_state.filters_expanded
-
+# ==============================================================================
+# TAB 2: WHALE SCREENER (DENGAN LOGIC BARU + COLLAPSIBLE FILTERS)
+# ==============================================================================
+with tab2:
+    st.markdown("### 🐋 Whale & Retail Detection Screener")
+    
+    # ==========================================================================
+    # COLLAPSIBLE FILTER SECTION
+    # ==========================================================================
+    # State untuk expand/collapse filters
+    if 'filters_expanded' not in st.session_state:
+        st.session_state.filters_expanded = True
+    
+    # Header dengan toggle button
+    col_header1, col_header2 = st.columns([3, 1])
+    
+    with col_header1:
+        st.markdown("**🔍 Detection Controls**")
+    
+    with col_header2:
+        # Toggle button untuk expand/collapse filters
+        if st.button(
+            "📊 Tampilkan Filter" if not st.session_state.filters_expanded else "📉 Sembunyikan Filter",
+            key="toggle_filters",
+            use_container_width=True
+        ):
+            st.session_state.filters_expanded = not st.session_state.filters_expanded
+    
+    # FILTER SECTION (Collapsible)
+    if st.session_state.filters_expanded:
+        with st.container(border=True):
+            # Mode Deteksi
+            st.markdown("#### 🎯 Mode Deteksi")
+            col_mode1, col_mode2 = st.columns([1, 2])
+            
+            with col_mode1:
+                anomaly_type = st.radio(
+                    "Target Deteksi:",
+                    ("🐋 Whale Signal (High AOV)", "⚡ Split/Retail Signal (Low AOV)"),
+                    help="Whale = Akumulasi Kasar (Lot Gede). Split = Distribusi/Akumulasi Senyap (Lot Kecil).",
+                    key="detection_mode"
+                )
+            
+            with col_mode2:
+                # Date Selection
+                min_date = df['Last Trading Date'].min().date()
+                max_date = df['Last Trading Date'].max().date()
+                selected_date = st.date_input(
+                    "Tanggal Analisa",
+                    value=max_date,
+                    min_value=min_date,
+                    max_value=max_date,
+                    key="screener_date"
+                )
+                selected_date = pd.to_datetime(selected_date)
+            
+            st.divider()
+            
+            # Dynamic Thresholds berdasarkan mode
+            if anomaly_type == "🐋 Whale Signal (High AOV)":
+                st.markdown("#### 🐋 Parameter Paus")
+                col_param1, col_param2, col_param3 = st.columns(3)
+                
+                with col_param1:
+                    min_ratio = st.slider(
+                        "Min. Lonjakan AOV (x Lipat)", 
+                        1.5, 10.0, 2.0, 0.1,
+                        help="Order hari ini harus X kali lebih besar dari rata-rata.",
+                        key="whale_ratio"
+                    )
+                
+                with col_param2:
+                    min_value = st.number_input(
+                        "Min. Transaksi (Rp)", 
+                        value=1_000_000_000, 
+                        step=500_000_000,
+                        format="%d",
+                        key="whale_value"
+                    )
+                
+                with col_param3:
+                    min_freq = st.number_input(
+                        "Min. Frekuensi", 
+                        value=50, 
+                        step=10,
+                        help="Minimal jumlah transaksi",
+                        key="whale_freq"
+                    )
+                
+                table_color_map = 'Greens'
+                metric_label = "Paus Terdeteksi"
+                
+            else:  # Split/Retail Signal
+                st.markdown("#### ⚡ Parameter Semut/Retail")
+                col_param1, col_param2, col_param3 = st.columns(3)
+                
+                with col_param1:
+                    max_ratio = st.slider(
+                        "Max. AOV Ratio (0.x)", 
+                        0.1, 0.9, 0.6, 0.05,
+                        help="Order hari ini harus DI BAWAH 0.x kali rata-rata.",
+                        key="retail_ratio"
+                    )
+                
+                with col_param2:
+                    min_value = st.number_input(
+                        "Min. Transaksi (Rp)", 
+                        value=500_000_000, 
+                step=100_000_000,
+                        format="%d",
+                        key="retail_value"
+                    )
+                
+                with col_param3:
+                    min_freq = st.number_input(
+                        "Min. Frekuensi", 
+                        value=100, 
+                        step=10,
+                        help="Minimal jumlah transaksi (retail biasanya lebih sering)",
+                        key="retail_freq"
+                    )
+                
+                table_color_map = 'Reds_r'
+                metric_label = "Split/Retail Terdeteksi"
+            
+            st.divider()
+            
+            # Additional Filters Section
+            st.markdown("#### 🎯 Filter Tambahan (Opsional)")
+            
+            col_add1, col_add2, col_add3 = st.columns(3)
+            
+            with col_add1:
+                # Sector Filter
+                if 'Sector' in df.columns:
+                    sectors = ['Semua Sektor'] + sorted(df['Sector'].dropna().unique().tolist())
+                    selected_sector = st.selectbox(
+                        "Filter Sektor",
+                        sectors,
+                        key="screener_sector"
+                    )
+            
+            with col_add2:
+                # Price Change Filter
+                price_change_filter = st.checkbox("Filter Perubahan Harga", value=False, key="price_filter")
+                if price_change_filter:
+                    min_change = st.number_input("Min. Change %", value=0.0, step=0.5, format="%.1f", key="min_change")
+                    if anomaly_type == "🐋 Whale Signal (High AOV)":
+                        change_direction = st.radio("Arah", ["Positif", "Negatif", "Netral"], horizontal=True, key="whale_dir")
+                    else:
+                        change_direction = st.radio("Arah", ["Positif", "Negatif", "Netral"], horizontal=True, key="retail_dir")
+            
+            with col_add3:
+                # Sort Options
+                sort_options = {
+                    "AOV Ratio (Tertinggi)": "AOV_Ratio",
+                    "Nilai Transaksi (Tertinggi)": "Value",
+                    "Volume (Tertinggi)": "Volume",
+                    "Frekuensi (Tertinggi)": "Frequency",
+                    "Perubahan % (Tertinggi)": "Change %",
+                    "Conviction Score (Tertinggi)": "Conviction_Score"
+                } if anomaly_type == "🐋 Whale Signal (High AOV)" else {
+                    "AOV Ratio (Terendah)": "AOV_Ratio",
+                    "Nilai Transaksi (Tertinggi)": "Value",
+                    "Volume (Tertinggi)": "Volume",
+                    "Frekuensi (Tertinggi)": "Frequency",
+                    "Perubahan % (Terendah)": "Change %"
+                }
+                
+                sort_by = st.selectbox(
+                    "Urutkan Berdasarkan",
+                    list(sort_options.keys()),
+                    key="sort_by"
+                )
+            
+            # Quick Action Buttons
+            st.divider()
+            st.markdown("#### ⚡ Quick Actions")
+            
+            col_action1, col_action2, col_action3 = st.columns(3)
+            
+            with col_action1:
+                if st.button("🔍 Jalankan Screening", use_container_width=True, type="primary"):
+                    # Trigger screening (akan dijalankan otomatis)
+                    st.rerun()
+            
+            with col_action2:
+                if st.button("🔄 Reset ke Default", use_container_width=True):
+                    # Reset semua filter ke default
+                    st.session_state.filters_expanded = True
+                    if 'detection_mode' in st.session_state:
+                        del st.session_state.detection_mode
+                    if 'screener_date' in st.session_state:
+                        del st.session_state.screener_date
+                    if anomaly_type == "🐋 Whale Signal (High AOV)":
+                        if 'whale_ratio' in st.session_state:
+                            del st.session_state.whale_ratio
+                        if 'whale_value' in st.session_state:
+                            del st.session_state.whale_value
+                        if 'whale_freq' in st.session_state:
+                            del st.session_state.whale_freq
+                    else:
+                        if 'retail_ratio' in st.session_state:
+                            del st.session_state.retail_ratio
+                        if 'retail_value' in st.session_state:
+                            del st.session_state.retail_value
+                        if 'retail_freq' in st.session_state:
+                            del st.session_state.retail_freq
+                    st.rerun()
+            
+            with col_action3:
+                # Toggle untuk sembunyikan filter setelah screening
+                auto_collapse = st.checkbox(
+                    "Auto-sembunyikan filter setelah screening",
+                    value=False,
+                    key="auto_collapse"
+                )
+    
+    else:
+        # Jika filter disembunyikan, tampilkan minimal info
+        st.info("""
+        🔍 **Filters are currently hidden.** 
+        Click **"Tampilkan Filter"** button above to adjust screening parameters.
+        """)
+        
+        # Tampilkan summary settings yang sedang aktif
+        with st.container(border=True):
+            col_sum1, col_sum2, col_sum3 = st.columns(3)
+            
+            with col_sum1:
+                st.markdown("**Mode:**")
+                st.text(anomaly_type if 'detection_mode' in st.session_state else "🐋 Whale Signal (High AOV)")
+            
+            with col_sum2:
+                st.markdown("**Tanggal:**")
+                st.text(selected_date.strftime('%d %b %Y') if 'screener_date' in st.session_state else max_date.strftime('%d %b %Y'))
+            
+            with col_sum3:
+                st.markdown("**Threshold:**")
+                if anomaly_type == "🐋 Whale Signal (High AOV)":
+                    threshold_val = min_ratio if 'whale_ratio' in st.session_state else 2.0
+                    st.text(f"AOV ≥ {threshold_val}x")
+                else:
+                    threshold_val = max_ratio if 'retail_ratio' in st.session_state else 0.6
+                    st.text(f"AOV ≤ {threshold_val}x")
+    
+    # ==========================================================================
+    # LOGIC DETECTION (SAMA SEPERTI SEBELUMNYA)
+    # ==========================================================================
+    # Get data for selected date
+    df_daily = df[df['Last Trading Date'] == selected_date].copy()
+    
+    if df_daily.empty:
+        st.warning(f"⚠️ Tidak ada data untuk tanggal {selected_date.strftime('%d %b %Y')}")
+        df_daily = latest_df.copy()
+        st.info(f"Menampilkan data terbaru: {latest_date.strftime('%d %b %Y')}")
+    
+    # Apply detection logic berdasarkan mode
+    if anomaly_type == "🐋 Whale Signal (High AOV)":
+        base_mask = (
+            (df_daily['AOV_Ratio'] >= min_ratio) & 
+            (df_daily['Value'] >= min_value) &
+            (df_daily['Frequency'] >= min_freq)
+        )
+        suspects = df_daily[base_mask].copy()
+        
+        if not suspects.empty:
+            min_aov = suspects['AOV_Ratio'].min()
+            max_aov = suspects['AOV_Ratio'].max()
+            if max_aov > min_aov:
+                suspects['Conviction_Score'] = (
+                    (suspects['AOV_Ratio'] - min_aov) / (max_aov - min_aov) * 80 + 20
+                ).clip(0, 100)
+            else:
+                suspects['Conviction_Score'] = 50
+    else:
+        base_mask = (
+            (df_daily['AOV_Ratio'] <= max_ratio) & 
+            (df_daily['AOV_Ratio'] > 0) & 
+            (df_daily['Value'] >= min_value) &
+            (df_daily['Frequency'] >= min_freq)
+        )
+        suspects = df_daily[base_mask].copy()
+        
+        if not suspects.empty:
+            suspects['Conviction_Score'] = (
+                (max_ratio - suspects['AOV_Ratio']) / max_ratio * 80 + 20
+            ).clip(0, 100)
+    
+    # Apply additional filters
+    if not suspects.empty:
+        if 'selected_sector' in locals() and selected_sector != 'Semua Sektor' and 'Sector' in suspects.columns:
+            suspects = suspects[suspects['Sector'] == selected_sector]
+        
+        if price_change_filter and 'Change %' in suspects.columns:
+            if change_direction == "Positif":
+                suspects = suspects[suspects['Change %'] >= min_change]
+            elif change_direction == "Negatif":
+                suspects = suspects[suspects['Change %'] <= -min_change]
+            elif change_direction == "Netral":
+                suspects = suspects[abs(suspects['Change %']) <= abs(min_change)]
+        
+        sort_column = sort_options[sort_by]
+        ascending = False
+        if anomaly_type == "⚡ Split/Retail Signal (Low AOV)":
+            if sort_by == "AOV Ratio (Terendah)":
+                ascending = True
+            elif sort_by == "Perubahan % (Terendah)":
+                ascending = True
+        suspects = suspects.sort_values(by=sort_column, ascending=ascending)
+        
+        # Auto-collapse filters jika di-set
+        if 'auto_collapse' in st.session_state and st.session_state.auto_collapse:
+            st.session_state.filters_expanded = False
+    
+    # ==========================================================================
+    # DISPLAY RESULTS (SAMA SEPERTI SEBELUMNYA)
+    # ==========================================================================
+    st.markdown(f"""
+    <div class="metric-card">
+        <div class="big-text">{metric_label}</div>
+        <div class="value-text">{len(suspects)} saham</div>
+        <div class="small-text">
+            Tanggal: {selected_date.strftime('%d %b %Y')} | 
+            Mode: {anomaly_type.split('(')[1].replace(')', '')}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    if not suspects.empty:
+        # Display results table
+        display_cols = [
+            'Stock Code', 'Close', 'Change %', 'Volume',
+            'Avg_Order_Volume', 'AOV_Ratio', 'Value',
+            'Frequency'
+        ]
+        
+        if 'Conviction_Score' in suspects.columns:
+            display_cols.insert(7, 'Conviction_Score')
+        
+        if 'Company Name' in suspects.columns:
+            display_cols.insert(1, 'Company Name')
+        
+        if 'Sector' in suspects.columns:
+            display_cols.append('Sector')
+        
+        display_df = suspects[display_cols].copy()
+        
+        styled_df = display_df.style.format({
+            'Close': 'Rp {:,.0f}',
+            'Change %': '{:+.2f}%',
+            'Volume': '{:,.0f}',
+            'Avg_Order_Volume': '{:,.0f}',
+            'AOV_Ratio': '{:.2f}x',
+            'Value': 'Rp {:,.0f}',
+            'Frequency': '{:,.0f}',
+            'Conviction_Score': '{:.0f}%'
+        })
+        
+        if anomaly_type == "🐋 Whale Signal (High AOV)":
+            styled_df = styled_df.background_gradient(
+                subset=['AOV_Ratio', 'Conviction_Score'],
+                cmap=table_color_map
+            )
+            
+            def color_whale_change(val):
+                if isinstance(val, str) and '%' in val:
+                    try:
+                        num_val = float(val.replace('%', '').replace('+', ''))
+                        if num_val > 0:
+                            return 'color: #00cc00; font-weight: bold'
+                        elif num_val < 0:
+                            return 'color: #ff4444'
+                    except:
+                        pass
+                return ''
+            
+            styled_df = styled_df.map(color_whale_change, subset=['Change %'])
+            
+        else:
+            styled_df = styled_df.background_gradient(
+                subset=['AOV_Ratio'],
+                cmap=table_color_map
+            )
+            
+            if 'Conviction_Score' in display_df.columns:
+                styled_df = styled_df.background_gradient(
+                    subset=['Conviction_Score'],
+                    cmap='Reds'
+                )
+            
+            def color_retail_change(val):
+                if isinstance(val, str) and '%' in val:
+                    try:
+                        num_val = float(val.replace('%', '').replace('+', ''))
+                        if num_val < 0:
+                            return 'color: #ff4444; font-weight: bold'
+                        elif num_val > 0:
+                            return 'color: #00cc00'
+                    except:
+                        pass
+                return ''
+            
+            styled_df = styled_df.map(color_retail_change, subset=['Change %'])
+        
+        st.dataframe(
+            styled_df,
+            use_container_width=True,
+            height=600
+        )
+        
+        # Download option
+        csv = suspects.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download Detection List",
+            data=csv,
+            file_name=f"{anomaly_type.split()[0].replace('🐋', 'whale').replace('⚡', 'retail')}_detection_{selected_date.strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
+        
+        # Visualization
+        st.markdown("### 📊 Visualization")
+        
+        if len(suspects) >= 3:
+            top_n = min(10, len(suspects))
+            top_detection = suspects.head(top_n)
+            
+            if anomaly_type == "🐋 Whale Signal (High AOV)":
+                fig = px.bar(
+                    top_detection,
+                    x='Stock Code',
+                    y='AOV_Ratio',
+                    color='AOV_Ratio',
+                    color_continuous_scale='Greens',
+                    title=f'Top {top_n} Whales by AOV Ratio',
+                    labels={'AOV_Ratio': 'AOV Ratio (x)', 'Stock Code': 'Stock'},
+                    hover_data=['Value', 'Frequency', 'Change %']
+                )
+                fig.add_hline(
+                    y=min_ratio,
+                    line_dash="dash",
+                    line_color="orange",
+                    annotation_text=f"Threshold: {min_ratio}x"
+                )
+            else:
+                fig = px.bar(
+                    top_detection,
+                    x='Stock Code',
+                    y='AOV_Ratio',
+                    color='AOV_Ratio',
+                    color_continuous_scale='Reds_r',
+                    title=f'Top {top_n} Retail/Split by AOV Ratio',
+                    labels={'AOV_Ratio': 'AOV Ratio (x)', 'Stock Code': 'Stock'},
+                    hover_data=['Value', 'Frequency', 'Change %']
+                )
+                fig.add_hline(
+                    y=max_ratio,
+                    line_dash="dash",
+                    line_color="orange",
+                    annotation_text=f"Threshold: {max_ratio}x"
+                )
+            
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Additional metrics
+            col_met1, col_met2, col_met3 = st.columns(3)
+            
+            with col_met1:
+                avg_aov = suspects['AOV_Ratio'].mean()
+                st.metric("Rata-rata AOV Ratio", f"{avg_aov:.2f}x")
+            
+            with col_met2:
+                total_value = suspects['Value'].sum()
+                st.metric("Total Nilai Transaksi", f"Rp {total_value:,.0f}")
+            
+            with col_met3:
+                if 'Conviction_Score' in suspects.columns:
+                    avg_conviction = suspects['Conviction_Score'].mean()
+                    st.metric("Rata-rata Conviction", f"{avg_conviction:.0f}%")
+    
+    else:
+        st.info("🚫 Tidak ada sinyal terdeteksi dengan filter saat ini.")
+        
+        st.markdown("""
+        **💡 Saran untuk mendapatkan hasil:**
+        
+        **Untuk Whale Detection:**
+        1. Kurangi **Min. Lonjakan AOV** (coba 1.5x)
+        2. Kurangi **Min. Transaksi** (coba Rp 500 juta)
+        3. Kurangi **Min. Frekuensi** (coba 30)
+        4. Pilih **"Semua Sektor"**
+        
+        **Untuk Retail Detection:**
+        1. Naikkan **Max. AOV Ratio** (coba 0.7x)
+        2. Kurangi **Min. Transaksi** (coba Rp 200 juta)
+        3. Pilih tanggal dengan aktivitas tinggi
+        4. Coba tanggal berbeda
+        """)
 # ==============================================================================
 # TAB 3: MARKET OVERVIEW (DENGAN FILTER)
 # ==============================================================================
