@@ -1183,50 +1183,6 @@ with tab2:
                 st.code(display_text, language='text')
                 st.success("✅ Data copied to clipboard!")
         
-       
-        # ======================================================================
-        # SECTOR ANALYSIS (jika ada data sector)
-        # ======================================================================
-        if 'Sector' in suspects.columns and len(suspects['Sector'].unique()) > 1:
-            st.markdown("#### 🏭 Sector Analysis")
-            
-            sector_stats = suspects.groupby('Sector').agg({
-                'AOV_Ratio': 'mean',
-                'Stock Code': 'count',
-                'Value': 'sum',
-                'Change %': 'mean'
-            }).reset_index()
-            
-            sector_stats.columns = ['Sector', 'Avg AOV Ratio', 'Stock Count', 'Total Value', 'Avg Change %']
-            
-            col_sector1, col_sector2 = st.columns(2)
-            
-            with col_sector1:
-                # Treemap
-                fig = px.treemap(
-                    sector_stats,
-                    path=['Sector'],
-                    values='Total Value',
-                    color='Avg AOV Ratio',
-                    color_continuous_scale='RdYlGn' if anomaly_type == "🐋 Whale Signal (High AOV)" else 'RdBu_r',
-                    title='Sector Distribution by Transaction Value'
-                )
-                fig.update_layout(height=400)
-                st.plotly_chart(fig, use_container_width=True)
-            
-            with col_sector2:
-                # Bar chart
-                fig = px.bar(
-                    sector_stats.sort_values('Avg AOV Ratio', ascending=False),
-                    x='Sector',
-                    y='Avg AOV Ratio',
-                    color='Avg AOV Ratio',
-                    color_continuous_scale='Greens' if anomaly_type == "🐋 Whale Signal (High AOV)" else 'Reds_r',
-                    title='Average AOV Ratio by Sector',
-                    labels={'Avg AOV Ratio': 'Avg AOV (x)'}
-                )
-                fig.update_layout(height=400, xaxis_tickangle=45)
-                st.plotly_chart(fig, use_container_width=True)
         
         # ======================================================================
         # INTERPRETATION GUIDE
