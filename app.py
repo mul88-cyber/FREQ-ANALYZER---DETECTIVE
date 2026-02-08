@@ -1050,21 +1050,16 @@ with tab2:
         # Ambil data untuk display
         display_df = suspects[display_cols].copy()
         
-        # Format dataframe dengan separator koma - PERBAIKI FORMATING
-        styled_df = display_df.style.format({
-            'Close': lambda x: f"Rp {x:,.0f}" if pd.notnull(x) else "Rp 0",
-            'Change %': lambda x: f"{x:+.2f}%" if pd.notnull(x) else "0.00%",
-            'Volume': lambda x: f"{x:,.0f}" if pd.notnull(x) else "0",
-            'Avg_Order_Volume': lambda x: f"{x:,.0f}" if pd.notnull(x) else "0",
-            'AOV_Ratio': lambda x: f"{x:.2f}x" if pd.notnull(x) else "0.00x",
-            'Value': lambda x: f"Rp {x:,.0f}" if pd.notnull(x) else "Rp 0",  # Format dengan koma
-            'Frequency': lambda x: f"{x:,.0f}" if pd.notnull(x) else "0",  # Format dengan koma
-            'Conviction_Score': lambda x: f"{x:.0f}%" if pd.notnull(x) else "0%"
-        })
+        # ==============================================================
+        # PERBAIKAN: FORMATTING & STYLING
+        # ==============================================================
         
-        # Apply styling berdasarkan mode
+        # 1. Inisialisasi Styler (JANGAN DI-FORMAT DULU KE STRING)
+        # Kita biarkan data tetap numeric agar background_gradient bekerja
+        styled_df = display_df.style
+
+        # 2. Terapkan Background Gradient (Saat data masih angka)
         if anomaly_type == "🐋 Whale Signal (High AOV)":
-            # Untuk whale: gradient hijau untuk AOV Ratio dan Conviction
             if 'AOV_Ratio' in display_df.columns:
                 styled_df = styled_df.background_gradient(
                     subset=['AOV_Ratio'],
@@ -1081,28 +1076,20 @@ with tab2:
                     vmax=100
                 )
             
-            # Highlight perubahan harga
+            # Highlight Change % (Custom Logic)
             def color_whale_change(val):
-                if isinstance(val, str) and '%' in val:
-                    try:
-                        num_val = float(val.replace('%', '').replace('+', ''))
-                        if num_val > 1.0:
-                            return 'background-color: #d1fae5; color: #065f46; font-weight: bold'
-                        elif num_val > 0:
-                            return 'color: #10b981'
-                        elif num_val < -1.0:
-                            return 'background-color: #fee2e2; color: #991b1b'
-                        elif num_val < 0:
-                            return 'color: #ef4444'
-                    except:
-                        pass
+                if pd.isna(val): return ''
+                if val > 1.0: return 'background-color: #d1fae5; color: #065f46; font-weight: bold'
+                if val > 0: return 'color: #10b981'
+                if val < -1.0: return 'background-color: #fee2e2; color: #991b1b'
+                if val < 0: return 'color: #ef4444'
                 return ''
             
             if 'Change %' in display_df.columns:
                 styled_df = styled_df.map(color_whale_change, subset=['Change %'])
-            
+
         else:
-            # Untuk retail: gradient merah terbalik untuk AOV Ratio
+            # Logic Gradient untuk Retail
             if 'AOV_Ratio' in display_df.columns:
                 styled_df = styled_df.background_gradient(
                     subset=['AOV_Ratio'],
@@ -1119,27 +1106,33 @@ with tab2:
                     vmax=100
                 )
             
-            # Highlight perubahan harga untuk retail
             def color_retail_change(val):
-                if isinstance(val, str) and '%' in val:
-                    try:
-                        num_val = float(val.replace('%', '').replace('+', ''))
-                        if num_val < -2.0:
-                            return 'background-color: #fef3c7; color: #92400e; font-weight: bold'
-                        elif num_val < 0:
-                            return 'color: #f59e0b'
-                        elif num_val > 2.0:
-                            return 'background-color: #dbeafe; color: #1e40af'
-                        elif num_val > 0:
-                            return 'color: #3b82f6'
-                    except:
-                        pass
+                if pd.isna(val): return ''
+                if val < -2.0: return 'background-color: #fef3c7; color: #92400e; font-weight: bold'
+                if val < 0: return 'color: #f59e0b'
+                if val > 2.0: return 'background-color: #dbeafe; color: #1e40af'
+                if val > 0: return 'color: #3b82f6'
                 return ''
-            
+
             if 'Change %' in display_df.columns:
                 styled_df = styled_df.map(color_retail_change, subset=['Change %'])
+
+        # 3. Terapkan Format String (TERAKHIR) - Ini yang memunculkan Koma & Rp
+        # Ini mengubah tampilan jadi text, makanya harus ditaruh paling akhir setelah perhitungan warna selesai
+        styled_df = styled_df.format({
+            'Close': 'Rp {:,.0f}',
+            'Change %': '{:+.2f}%',
+            'Volume': '{:,.0f}',
+            'Avg_Order_Volume': '{:,.0f}',
+            'AOV_Ratio': '{:.2f}x',
+            'Value': 'Rp {:,.0f}', 
+            'Frequency': '{:,.0f}',
+            'Conviction_Score': '{:.0f}%'
+        })
         
-        # Tampilkan dataframe dengan column config yang benar
+        # 4. Tampilkan Dataframe
+        # PENTING: Hapus 'format' di column_config agar tidak konflik dengan Pandas Styler
+        # Kita ganti NumberColumn jadi Column biasa atau TextColumn agar Streamlit menampilkan apa adanya (termasuk koma)
         st.dataframe(
             styled_df,
             use_container_width=True,
@@ -1147,14 +1140,14 @@ with tab2:
             column_config={
                 'Stock Code': st.column_config.TextColumn("Kode", width="small"),
                 'Company Name': st.column_config.TextColumn("Nama Perusahaan", width="medium"),
-                'Close': st.column_config.NumberColumn("Harga", format="Rp %d"),
-                'Change %': st.column_config.NumberColumn("Change %", format="%+.2f%%"),
-                'Volume': st.column_config.NumberColumn("Volume", format="%d"),  # Streamlit otomatis format dengan koma
-                'Avg_Order_Volume': st.column_config.NumberColumn("Avg Lot", format="%d"),  # Streamlit otomatis format dengan koma
-                'AOV_Ratio': st.column_config.NumberColumn("AOV Ratio", format="%.2fx"),
-                'Value': st.column_config.NumberColumn("Value", format="Rp %d"),  # Ganti label jadi "Value"
-                'Frequency': st.column_config.NumberColumn("Freq", format="%d"),  # Streamlit otomatis format dengan koma
-                'Conviction_Score': st.column_config.NumberColumn("Conviction", format="%.0f%%"),
+                'Close': st.column_config.Column("Harga"), # Biarkan Styler yang mengatur format
+                'Change %': st.column_config.Column("Change %"),
+                'Volume': st.column_config.Column("Volume"),
+                'Avg_Order_Volume': st.column_config.Column("Avg Lot"),
+                'AOV_Ratio': st.column_config.Column("AOV Ratio"),
+                'Value': st.column_config.Column("Value"),
+                'Frequency': st.column_config.Column("Freq"),
+                'Conviction_Score': st.column_config.Column("Conviction"),
                 'Sector': st.column_config.TextColumn("Sektor", width="medium")
             }
         )
