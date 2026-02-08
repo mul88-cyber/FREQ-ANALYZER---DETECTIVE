@@ -115,6 +115,7 @@ if df_raw is None:
 # ==============================================================================
 df = df_raw.sort_values(by=['Stock Code', 'Last Trading Date']).copy()
 df['AOV_Ratio'] = np.where(df['MA30_AOVol'] > 0, df['Avg_Order_Volume'] / df['MA30_AOVol'], 0)
+max_date = df['Last Trading Date'].max()
 
 # ==============================================================================
 # 4. DASHBOARD TABS
@@ -123,7 +124,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "📈 Deep Dive", 
     "🐋 Screener", 
     "📊 Market Overview",
-    "🧪 Research Lab"  # TAB BARU!
+    "🧪 Research Lab"
 ])
 
 # ==============================================================================
@@ -171,13 +172,13 @@ with tab1:
         st.plotly_chart(fig, use_container_width=True)
 
 # ==============================================================================
-# TAB 2: WHALE SCREENER (SMART FILTER UPGRADE)
+# TAB 2: WHALE SCREENER
 # ==============================================================================
 with tab2:
     st.markdown("### 🐋 Whale & Retail Detection Screener")
     
     # --- 1. SETTINGS SECTION ---
-    with st.container(border=True):
+    with st.container(): # Hapus border agar kompatibel
         col_set1, col_set2, col_set3 = st.columns(3)
         
         with col_set1:
@@ -185,19 +186,21 @@ with tab2:
             anomaly_type = st.radio(
                 "Target:",
                 ("🐋 Whale Signal (High AOV)", "⚡ Split/Retail Signal (Low AOV)"),
-                label_visibility="collapsed"
+                key="target_radio"
             )
             
         with col_set2:
             st.markdown("#### 📅 Tanggal Analisa")
-            selected_date_val = st.date_input("Pilih Tanggal", max_date, label_visibility="collapsed")
+            # FIX: Hapus label_visibility agar kompatibel dengan streamlit lama
+            selected_date_val = st.date_input("Pilih Tanggal", max_date)
             selected_date = pd.to_datetime(selected_date_val)
             
         with col_set3:
             st.markdown("#### 💰 Min. Transaksi")
-            min_value = st.number_input("Rp (Miliar)", value=1_000_000_000, step=500_000_000, label_visibility="collapsed")
+            # FIX: Hapus label_visibility
+            min_value = st.number_input("Rp (Miliar)", value=1_000_000_000, step=500_000_000)
 
-    # --- 2. SMART PRICE FILTER (INI FITUR BARUNYA) ---
+    # --- 2. SMART PRICE FILTER ---
     st.markdown("#### 📉 Kondisi Harga (Price Context)")
     st.info("💡 **Fitur Baru:** Filter ini mencari saham yang AOV-nya anomali, tapi harganya belum terbang (Pre-Pump).")
     
@@ -214,9 +217,7 @@ with tab2:
     # --- 3. FILTER LOGIC ---
     df_daily = df[df['Last Trading Date'] == selected_date].copy()
     
-    # A. Filter Anomali AOV (Whale vs Retail)
     if anomaly_type == "🐋 Whale Signal (High AOV)":
-        # Whale: AOV Ratio Tinggi (> 2.0x)
         min_ratio = 2.0
         suspects = df_daily[
             (df_daily['AOV_Ratio'] >= min_ratio) & 
@@ -224,7 +225,6 @@ with tab2:
         ]
         color_map = 'Greens'
     else:
-        # Retail: AOV Ratio Rendah (< 0.6x)
         suspects = df_daily[
             (df_daily['AOV_Ratio'] <= 0.6) & 
             (df_daily['AOV_Ratio'] > 0) & 
@@ -232,61 +232,40 @@ with tab2:
         ]
         color_map = 'Reds_r'
 
-    # B. Filter Kondisi Harga (Price Action)
     if not suspects.empty:
-        # Kita pakai VWMA_20D sebagai acuan Tren
         if 'VWMA_20D' not in suspects.columns:
-            # Hitung VWMA simple jika belum ada
             suspects['TP'] = (suspects['High'] + suspects['Low'] + suspects['Close']) / 3
             suspects['VP'] = suspects['TP'] * suspects['Volume']
             suspects['VWMA_20D'] = suspects.groupby('Stock Code')['VP'].transform(lambda x: x.rolling(20).sum() / x.rolling(20).sum())
 
         if price_condition == "💎 HIDDEN GEM (Sideways/Datar)":
-            # Syarat: Perubahan harga tipis (-2% s/d +2%)
-            suspects = suspects[
-                (suspects['Change %'] >= -2.0) & 
-                (suspects['Change %'] <= 2.0)
-            ]
-            st.caption("ℹ️ Menampilkan saham yang **AOV Meledak** tapi **Harga Diam**. Indikasi Akumulasi Senyap.")
+            suspects = suspects[(suspects['Change %'] >= -2.0) & (suspects['Change %'] <= 2.0)]
+            st.caption("ℹ️ Menampilkan saham yang **AOV Meledak** tapi **Harga Diam**.")
 
         elif price_condition == "⚓ BOTTOM FISHING (Lagi Turun/Downtrend)":
-            # Syarat: Harga Merah ATAU Harga di bawah VWMA (Downtrend)
-            suspects = suspects[
-                (suspects['Close'] < suspects['VWMA_20D']) | 
-                (suspects['Change %'] < 0)
-            ]
-            st.caption("ℹ️ Menampilkan saham yang **Harganya Turun/Bawah** tapi **AOV Meledak**. Indikasi Penampungan Barang (Stopping Volume).")
+            suspects = suspects[(suspects['Close'] < suspects['VWMA_20D']) | (suspects['Change %'] < 0)]
+            st.caption("ℹ️ Menampilkan saham yang **Harganya Turun** tapi **AOV Meledak**.")
 
         elif price_condition == "🚀 EARLY MOVE (Baru Mulai Naik)":
-            # Syarat: Harga Hijau tapi belum terbang tinggi (0% s/d 4%)
-            suspects = suspects[
-                (suspects['Change %'] > 0) & 
-                (suspects['Change %'] <= 4.0)
-            ]
-            st.caption("ℹ️ Menampilkan saham yang **Baru Mulai Hijau** dengan dukungan **Volume Paus**. Indikasi Awal Uptrend.")
+            suspects = suspects[(suspects['Change %'] > 0) & (suspects['Change %'] <= 4.0)]
+            st.caption("ℹ️ Menampilkan saham yang **Baru Mulai Hijau** dengan dukungan **Volume Paus**.")
     
     # --- 4. DISPLAY RESULTS ---
     if not suspects.empty:
-        # Sort by AOV Ratio descending
         suspects = suspects.sort_values(by='AOV_Ratio', ascending=False)
         
         col_met1, col_met2 = st.columns(2)
         col_met1.metric("Saham Ditemukan", len(suspects))
         col_met2.metric("Avg AOV Ratio", f"{suspects['AOV_Ratio'].mean():.2f}x")
 
-        # Define Columns
         desired_order = ['Stock Code', 'Company Name', 'Close', 'Change %', 'AOV_Ratio', 'Avg_Order_Volume', 'Value', 'VWMA_20D']
         display_cols = [col for col in desired_order if col in suspects.columns]
         display_df = suspects[display_cols].copy()
 
-        # Styling
         styled_df = display_df.style
-        
-        # Gradient AOV
         if 'AOV_Ratio' in display_df.columns:
             styled_df = styled_df.background_gradient(subset=['AOV_Ratio'], cmap=color_map)
         
-        # Color Change %
         def color_change(val):
             if val > 0: return 'color: #00cc00; font-weight: bold'
             if val < 0: return 'color: #ff4444; font-weight: bold'
@@ -295,7 +274,6 @@ with tab2:
         if 'Change %' in display_df.columns:
             styled_df = styled_df.map(color_change, subset=['Change %'])
 
-        # Formatting
         styled_df = styled_df.format({
             'Close': 'Rp {:,.0f}',
             'VWMA_20D': 'Rp {:,.0f}',
@@ -311,7 +289,7 @@ with tab2:
             column_config={
                 'Stock Code': st.column_config.TextColumn("Kode"),
                 'Close': st.column_config.Column("Harga"),
-                'VWMA_20D': st.column_config.Column("Rata2 (VWMA)"), # Untuk cek posisi harga
+                'VWMA_20D': st.column_config.Column("Rata2 (VWMA)"),
                 'AOV_Ratio': st.column_config.Column("Lonjakan AOV"),
                 'Avg_Order_Volume': st.column_config.Column("Lot/Trade")
             },
@@ -339,16 +317,15 @@ with tab3:
         st.plotly_chart(fig, use_container_width=True)
 
 # ==============================================================================
-# TAB 4: RESEARCH LAB (NEW!)
+# TAB 4: RESEARCH LAB
 # ==============================================================================
 with tab4:
     st.markdown("### 🧪 Research Lab: Uji Hipotesis")
     st.markdown("""
     **Tujuan:** Menguji apakah saham yang mengalami anomali AOV benar-benar naik di kemudian hari.
-    Kami akan melihat data 1 tahun ke belakang, mencari semua sinyal, dan menghitung profitabilitasnya.
     """)
     
-    with st.container(border=True):
+    with st.container():
         col_res1, col_res2, col_res3 = st.columns(3)
         with col_res1:
             test_mode = st.selectbox("Sinyal yang Diuji:", ["Whale (AOV Tinggi)", "Split (AOV Rendah)"])
@@ -358,36 +335,27 @@ with tab4:
             min_tx_test = st.number_input("Filter Saham Liquid (Min Rp):", value=500_000_000)
 
         if st.button("🚀 JALANKAN BACKTEST", type="primary", use_container_width=True):
-            
             with st.spinner("Sedang memproses data historis..."):
-                # 1. Siapkan Data
                 df_test = df.sort_values(['Stock Code', 'Last Trading Date']).copy()
                 
-                # 2. Definisikan Sinyal
                 if test_mode == "Whale (AOV Tinggi)":
                     df_test['Signal'] = (df_test['AOV_Ratio'] >= 2.0) & (df_test['Value'] >= min_tx_test)
                 else:
                     df_test['Signal'] = (df_test['AOV_Ratio'] <= 0.6) & (df_test['AOV_Ratio'] > 0) & (df_test['Value'] >= min_tx_test)
                 
-                # 3. Hitung Return ke Depan (Shift negatif)
-                # Shift(-5) artinya mengambil harga 5 hari ke depan
                 for d in hold_days:
                     df_test[f'Return_{d}D'] = df_test.groupby('Stock Code')['Close'].transform(lambda x: x.shift(-d) / x - 1)
                 
-                # 4. Filter Hanya Baris yang Ada Sinyal
                 signals = df_test[df_test['Signal']].copy()
                 
                 if signals.empty:
                     st.warning("Tidak ditemukan sinyal historis dengan filter ini.")
                 else:
                     st.success(f"Ditemukan {len(signals):,} Sinyal Historis dalam 1 Tahun Terakhir!")
-                    
-                    # 5. Tampilkan Statistik
                     stats_cols = st.columns(len(hold_days))
                     
                     for idx, d in enumerate(hold_days):
                         col_name = f'Return_{d}D'
-                        # Hapus data NaN (sinyal di hari-hari terakhir yg belum ada data masa depannya)
                         valid_signals = signals.dropna(subset=[col_name])
                         
                         avg_ret = valid_signals[col_name].mean() * 100
@@ -398,16 +366,12 @@ with tab4:
                             st.metric("Rata-rata Profit", f"{avg_ret:+.2f}%")
                             st.metric("Win Rate (Peluang Naik)", f"{win_rate:.1f}%")
                             
-                            # Histogram Distribusi
                             fig_hist = px.histogram(valid_signals, x=col_name, nbins=50, title=f"Distribusi Return {d} Hari",
                                                   labels={col_name: "Return"}, color_discrete_sequence=['#2962ff'])
-                            # Garis 0%
                             fig_hist.add_vline(x=0, line_dash="dash", line_color="red")
                             st.plotly_chart(fig_hist, use_container_width=True)
 
-                    # 6. Top Performers Table
                     st.markdown("#### 🏆 Contoh Sinyal Terbaik (Top Gainers)")
-                    # Ambil contoh dari periode holding pertama
                     sort_col = f'Return_{hold_days[0]}D'
                     top_signals = signals.dropna(subset=[sort_col]).sort_values(sort_col, ascending=False).head(10)
                     
