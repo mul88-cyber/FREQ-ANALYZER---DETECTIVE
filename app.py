@@ -125,6 +125,18 @@ df['AOV_Ratio'] = np.where(df['MA50_AOVol'] > 0, df['Avg_Order_Volume'] / df['MA
 df['Whale_Signal'] = df['AOV_Ratio'] >= 1.5
 df['Split_Signal'] = (df['AOV_Ratio'] <= 0.6) & (df['AOV_Ratio'] > 0)
 
+
+# D. Net Foreign Calc (Cek ketersediaan kolom dulu)
+if 'Foreign Buy' in df.columns and 'Foreign Sell' in df.columns:
+    df['Net Foreign'] = df['Foreign Buy'] - df['Foreign Sell']
+else:
+    df['Net Foreign'] = 0
+
+# E. Value Spike (Money Flow) - Khusus Bluechip
+# Rata-rata Value transaksi 20 hari
+df['MA20_Value'] = df.groupby('Stock Code')['Value'].transform(lambda x: x.rolling(20, min_periods=1).mean())
+df['Value_Ratio'] = np.where(df['MA20_Value'] > 0, df['Value'] / df['MA20_Value'], 0)
+
 max_date = df['Last Trading Date'].max()
 
 # ==============================================================================
@@ -628,8 +640,8 @@ with tab3:
     col_bc1, col_bc2, col_bc3 = st.columns(3)
     
     with col_bc1:
-        bc_date = st.date_input("Tanggal Pantau", max_date, key="bc_date")
-        bc_date = pd.to_datetime(bc_date)
+        bc_date_val = st.date_input("Tanggal Pantau", max_date, key="bc_date")
+        bc_date = pd.to_datetime(bc_date_val)
         
     with col_bc2:
         # Filter Value Besar (Indikasi Big Cap)
@@ -642,6 +654,28 @@ with tab3:
     # 2. Logic Bluechip Detection
     df_bc = df[df['Last Trading Date'] == bc_date].copy()
     
+    # --- PENTING: HITUNG KOLOM KHUSUS BLUECHIP JIKA BELUM ADA ---
+    # Net Foreign
+    if 'Net Foreign' not in df_bc.columns:
+        if 'Foreign Buy' in df_bc.columns and 'Foreign Sell' in df_bc.columns:
+            df_bc['Net Foreign'] = df_bc['Foreign Buy'] - df_bc['Foreign Sell']
+        else:
+            df_bc['Net Foreign'] = 0 # Default 0 jika data asing tidak ada
+
+    # Value Ratio (Spike Uang Masuk)
+    # Kita butuh data historis global untuk hitung MA20 Value, jadi idealnya sudah dihitung di Global Calculation.
+    # Tapi untuk safety, kita cek di sini.
+    if 'Value_Ratio' not in df_bc.columns:
+        # Jika kolom belum ada di df utama, kita tidak bisa hitung on-the-fly hanya dengan data 1 hari.
+        # Solusi: Beri nilai 0 atau ambil dari df global jika memungkinkan.
+        # TAPI, karena df global sudah di-load di awal, harusnya kita pastikan hitungan ini ada di Global Calculation (Section 3).
+        # Cek section Global Calculation Anda, pastikan baris ini ada:
+        # df['MA20_Value'] = df.groupby('Stock Code')['Value'].transform(lambda x: x.rolling(20, min_periods=1).mean())
+        # df['Value_Ratio'] = np.where(df['MA20_Value'] > 0, df['Value'] / df['MA20_Value'], 0)
+        
+        # Fallback jika lupa taruh di global:
+        df_bc['Value_Ratio'] = 0 
+
     # Filter Utama: Value Besar + AOV agak naik
     bc_suspects = df_bc[
         (df_bc['Value'] >= min_bc_value) & 
@@ -651,36 +685,45 @@ with tab3:
     if not bc_suspects.empty:
         st.success(f"Ditemukan {len(bc_suspects)} Saham Big Caps dengan aktivitas institusi.")
         
-        # Kolom Khusus Bluechip
-        cols_bc = ['Stock Code', 'Close', 'Change %', 'Net Foreign', 'Value', 'Value_Ratio', 'AOV_Ratio', 'Avg_Order_Volume']
+        # Kolom Khusus Bluechip (Pastikan nama kolom sesuai persis dengan dataframe)
+        desired_cols_bc = ['Stock Code', 'Close', 'Change %', 'Net Foreign', 'Value', 'Value_Ratio', 'AOV_Ratio', 'Avg_Order_Volume']
+        
+        # Filter hanya kolom yang BENAR-BENAR ADA untuk mencegah KeyError
+        cols_bc = [c for c in desired_cols_bc if c in bc_suspects.columns]
         
         # Styling Khusus
         styled_bc = bc_suspects[cols_bc].style
         
-        # Highlight Foreign Flow
-        def color_foreign(val):
-            if val > 1_000_000_000: return 'color: #00cc00; font-weight: bold' # Asing beli > 1M
-            if val < -1_000_000_000: return 'color: #ff4444; font-weight: bold' # Asing jual > 1M
-            return 'color: gray'
+        # Highlight Foreign Flow (Cek dulu kolomnya ada atau tidak)
+        if 'Net Foreign' in bc_suspects.columns:
+            def color_foreign(val):
+                if val > 1_000_000_000: return 'color: #00cc00; font-weight: bold' # Asing beli > 1M
+                if val < -1_000_000_000: return 'color: #ff4444; font-weight: bold' # Asing jual > 1M
+                return 'color: gray'
+            styled_bc = styled_bc.map(color_foreign, subset=['Net Foreign'])
         
         # Highlight Value Spike (Uang Masuk)
-        def color_val_ratio(val):
-            if val > 1.5: return 'background-color: #e3f2fd; color: #2962ff; font-weight: bold'
-            return ''
+        if 'Value_Ratio' in bc_suspects.columns:
+            def color_val_ratio(val):
+                if val > 1.5: return 'background-color: #e3f2fd; color: #2962ff; font-weight: bold'
+                return ''
+            styled_bc = styled_bc.map(color_val_ratio, subset=['Value_Ratio'])
 
-        styled_bc = styled_bc.map(color_foreign, subset=['Net Foreign'])
-        styled_bc = styled_bc.map(color_val_ratio, subset=['Value_Ratio'])
-        styled_bc = styled_bc.background_gradient(subset=['AOV_Ratio'], cmap='Blues', vmin=1.0, vmax=2.0)
+        if 'AOV_Ratio' in bc_suspects.columns:
+            styled_bc = styled_bc.background_gradient(subset=['AOV_Ratio'], cmap='Blues', vmin=1.0, vmax=2.0)
         
-        styled_bc = styled_bc.format({
+        # Formatting String
+        format_dict = {
             'Close': 'Rp {:,.0f}',
             'Change %': '{:+.2f}%',
-            'Net Foreign': 'Rp {:,.0f}',
             'Value': 'Rp {:,.0f}',
-            'Value_Ratio': '{:.1f}x', # Spike nilai transaksi
-            'AOV_Ratio': '{:.2f}x',
             'Avg_Order_Volume': '{:,.0f}'
-        })
+        }
+        if 'Net Foreign' in bc_suspects.columns: format_dict['Net Foreign'] = 'Rp {:,.0f}'
+        if 'Value_Ratio' in bc_suspects.columns: format_dict['Value_Ratio'] = '{:.1f}x'
+        if 'AOV_Ratio' in bc_suspects.columns: format_dict['AOV_Ratio'] = '{:.2f}x'
+
+        styled_bc = styled_bc.format(format_dict)
         
         st.dataframe(
             styled_bc,
