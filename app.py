@@ -682,7 +682,6 @@ with tab2:
                     )
                 
                 with col_param2:
-                    # FORMAT ANGKA: Tambah format dengan separator koma
                     min_value = st.number_input(
                         "Min. Transaksi (Rp)", 
                         value=1_000_000_000, 
@@ -716,7 +715,6 @@ with tab2:
                     )
                 
                 with col_param2:
-                    # FORMAT ANGKA: Tambah format dengan separator koma
                     min_value = st.number_input(
                         "Min. Transaksi (Rp)", 
                         value=500_000_000, 
@@ -1030,10 +1028,10 @@ with tab2:
         # Display results table
         st.markdown("#### 📋 Results Table")
         
-        # Pilih kolom untuk ditampilkan
+        # Pilih kolom untuk ditampilkan - PERBAIKI: "Nilai" ganti jadi "Value"
         display_cols = [
             'Stock Code', 'Close', 'Change %', 'Volume',
-            'Avg_Order_Volume', 'AOV_Ratio', 'Value',
+            'Avg_Order_Volume', 'AOV_Ratio', 'Value',  # Ganti 'Nilai' jadi 'Value'
             'Frequency'
         ]
         
@@ -1052,15 +1050,15 @@ with tab2:
         # Ambil data untuk display
         display_df = suspects[display_cols].copy()
         
-        # Format dataframe dengan separator koma
+        # Format dataframe dengan separator koma - PERBAIKI FORMATING
         styled_df = display_df.style.format({
             'Close': lambda x: f"Rp {x:,.0f}" if pd.notnull(x) else "Rp 0",
             'Change %': lambda x: f"{x:+.2f}%" if pd.notnull(x) else "0.00%",
             'Volume': lambda x: f"{x:,.0f}" if pd.notnull(x) else "0",
             'Avg_Order_Volume': lambda x: f"{x:,.0f}" if pd.notnull(x) else "0",
             'AOV_Ratio': lambda x: f"{x:.2f}x" if pd.notnull(x) else "0.00x",
-            'Value': lambda x: f"Rp {x:,.0f}" if pd.notnull(x) else "Rp 0",
-            'Frequency': lambda x: f"{x:,.0f}" if pd.notnull(x) else "0",
+            'Value': lambda x: f"Rp {x:,.0f}" if pd.notnull(x) else "Rp 0",  # Format dengan koma
+            'Frequency': lambda x: f"{x:,.0f}" if pd.notnull(x) else "0",  # Format dengan koma
             'Conviction_Score': lambda x: f"{x:.0f}%" if pd.notnull(x) else "0%"
         })
         
@@ -1141,7 +1139,7 @@ with tab2:
             if 'Change %' in display_df.columns:
                 styled_df = styled_df.map(color_retail_change, subset=['Change %'])
         
-        # Tampilkan dataframe
+        # Tampilkan dataframe dengan column config yang benar
         st.dataframe(
             styled_df,
             use_container_width=True,
@@ -1151,11 +1149,11 @@ with tab2:
                 'Company Name': st.column_config.TextColumn("Nama Perusahaan", width="medium"),
                 'Close': st.column_config.NumberColumn("Harga", format="Rp %d"),
                 'Change %': st.column_config.NumberColumn("Change %", format="%+.2f%%"),
-                'Volume': st.column_config.NumberColumn("Volume", format="%d"),
-                'Avg_Order_Volume': st.column_config.NumberColumn("Avg Lot", format="%d"),
+                'Volume': st.column_config.NumberColumn("Volume", format="%d"),  # Streamlit otomatis format dengan koma
+                'Avg_Order_Volume': st.column_config.NumberColumn("Avg Lot", format="%d"),  # Streamlit otomatis format dengan koma
                 'AOV_Ratio': st.column_config.NumberColumn("AOV Ratio", format="%.2fx"),
-                'Value': st.column_config.NumberColumn("Nilai", format="Rp %d"),
-                'Frequency': st.column_config.NumberColumn("Freq", format="%d"),
+                'Value': st.column_config.NumberColumn("Value", format="Rp %d"),  # Ganti label jadi "Value"
+                'Frequency': st.column_config.NumberColumn("Freq", format="%d"),  # Streamlit otomatis format dengan koma
                 'Conviction_Score': st.column_config.NumberColumn("Conviction", format="%.0f%%"),
                 'Sector': st.column_config.TextColumn("Sektor", width="medium")
             }
@@ -1350,6 +1348,7 @@ with tab2:
                     if 'Volume' in df_daily.columns:
                         total_volume = df_daily['Volume'].sum()
                         st.metric("Total Volume", f"{total_volume:,.0f} lot")
+
 # ==============================================================================
 # TAB 3: MARKET OVERVIEW (DENGAN FILTER)
 # ==============================================================================
@@ -1404,7 +1403,7 @@ with tab3:
         if 'AOV_Ratio' in latest_df.columns:
             whale_count_today = len(latest_df[latest_df['AOV_Ratio'] >= overview_whale_threshold])
             whale_pct = (whale_count_today / total_stocks_today * 100) if total_stocks_today > 0 else 0
-            st.metric(f"Whales (≥{overview_whale_threshold}x)", f"{whale_count_today}", f"{whale_pct:.1f}%")
+            st.metric(f"Whales (≥{overview_whale_threshold}x)", f"{whale_count_today:,}", f"{whale_pct:.1f}%")
     
     with stat_cols[3]:
         if 'Volume' in latest_df.columns:
