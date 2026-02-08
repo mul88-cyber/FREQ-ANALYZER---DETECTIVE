@@ -682,12 +682,13 @@ with tab2:
                     )
                 
                 with col_param2:
+                    # FORMAT ANGKA: Tambah format dengan separator koma
                     min_value = st.number_input(
                         "Min. Transaksi (Rp)", 
                         value=1_000_000_000, 
                         step=500_000_000,
                         format="%d",
-                        key="whale_value"
+                        help=f"Rp {1_000_000_000:,.0f} = Rp 1 Miliar"
                     )
                 
                 with col_param3:
@@ -696,7 +697,7 @@ with tab2:
                         value=50, 
                         step=10,
                         help="Minimal jumlah transaksi",
-                        key="whale_freq"
+                        format="%d"
                     )
                 
                 table_color_map = 'Greens'
@@ -715,12 +716,13 @@ with tab2:
                     )
                 
                 with col_param2:
+                    # FORMAT ANGKA: Tambah format dengan separator koma
                     min_value = st.number_input(
                         "Min. Transaksi (Rp)", 
                         value=500_000_000, 
                         step=100_000_000,
                         format="%d",
-                        key="retail_value"
+                        help=f"Rp {500_000_000:,.0f} = Rp 500 Juta"
                     )
                 
                 with col_param3:
@@ -729,7 +731,7 @@ with tab2:
                         value=100, 
                         step=10,
                         help="Minimal jumlah transaksi (retail biasanya lebih sering)",
-                        key="retail_freq"
+                        format="%d"
                     )
                 
                 table_color_map = 'Reds_r'
@@ -987,7 +989,7 @@ with tab2:
                 <div class="small-text">Tanggal: {selected_date.strftime('%d %b %Y')}</div>
             </div>
             <div style="text-align: right;">
-                <div class="value-text">{len(suspects)} saham</div>
+                <div class="value-text">{len(suspects):,} saham</div>
                 <div class="small-text">Mode: {anomaly_type.split('(')[1].replace(')', '')}</div>
             </div>
         </div>
@@ -995,7 +997,7 @@ with tab2:
     """, unsafe_allow_html=True)
     
     if not suspects.empty:
-        # Quick stats bar
+        # Quick stats bar - DITAMBAHKAN FORMAT SEPARATOR
         col_stats1, col_stats2, col_stats3, col_stats4 = st.columns(4)
         
         with col_stats1:
@@ -1004,10 +1006,18 @@ with tab2:
         
         with col_stats2:
             total_value = suspects['Value'].sum()
-            st.metric("Total Nilai", f"Rp {total_value/1_000_000_000:.1f}B")
+            # FORMAT DENGAN SEPARATOR KOMA
+            if total_value >= 1_000_000_000:
+                display_value = f"Rp {total_value/1_000_000_000:,.1f} B"
+            elif total_value >= 1_000_000:
+                display_value = f"Rp {total_value/1_000_000:,.1f} Jt"
+            else:
+                display_value = f"Rp {total_value:,.0f}"
+            st.metric("Total Nilai", display_value)
         
         with col_stats3:
             total_volume = suspects['Volume'].sum()
+            # FORMAT DENGAN SEPARATOR KOMA
             st.metric("Total Volume", f"{total_volume:,.0f} lot")
         
         with col_stats4:
@@ -1015,7 +1025,7 @@ with tab2:
                 avg_conviction = suspects['Conviction_Score'].mean()
                 st.metric("Avg Conviction", f"{avg_conviction:.0f}%")
             else:
-                st.metric("Total Saham", len(suspects))
+                st.metric("Total Saham", f"{len(suspects):,}")
         
         # Display results table
         st.markdown("#### 📋 Results Table")
@@ -1042,16 +1052,16 @@ with tab2:
         # Ambil data untuk display
         display_df = suspects[display_cols].copy()
         
-        # Format dataframe
+        # Format dataframe dengan separator koma
         styled_df = display_df.style.format({
-            'Close': 'Rp {:,.0f}',
-            'Change %': '{:+.2f}%',
-            'Volume': '{:,.0f}',
-            'Avg_Order_Volume': '{:,.0f}',
-            'AOV_Ratio': '{:.2f}x',
-            'Value': 'Rp {:,.0f}',
-            'Frequency': '{:,.0f}',
-            'Conviction_Score': '{:.0f}%'
+            'Close': lambda x: f"Rp {x:,.0f}" if pd.notnull(x) else "Rp 0",
+            'Change %': lambda x: f"{x:+.2f}%" if pd.notnull(x) else "0.00%",
+            'Volume': lambda x: f"{x:,.0f}" if pd.notnull(x) else "0",
+            'Avg_Order_Volume': lambda x: f"{x:,.0f}" if pd.notnull(x) else "0",
+            'AOV_Ratio': lambda x: f"{x:.2f}x" if pd.notnull(x) else "0.00x",
+            'Value': lambda x: f"Rp {x:,.0f}" if pd.notnull(x) else "Rp 0",
+            'Frequency': lambda x: f"{x:,.0f}" if pd.notnull(x) else "0",
+            'Conviction_Score': lambda x: f"{x:.0f}%" if pd.notnull(x) else "0%"
         })
         
         # Apply styling berdasarkan mode
@@ -1156,7 +1166,18 @@ with tab2:
         col_dl1, col_dl2, col_dl3 = st.columns([2, 1, 1])
         
         with col_dl1:
-            csv = suspects.to_csv(index=False).encode('utf-8')
+            # FORMAT CSV dengan separator koma
+            csv_data = suspects.copy()
+            # Format kolom numeric untuk CSV
+            for col in ['Close', 'Value']:
+                if col in csv_data.columns:
+                    csv_data[col] = csv_data[col].apply(lambda x: f"Rp {x:,.0f}" if pd.notnull(x) else "Rp 0")
+            
+            for col in ['Volume', 'Avg_Order_Volume', 'Frequency']:
+                if col in csv_data.columns:
+                    csv_data[col] = csv_data[col].apply(lambda x: f"{x:,.0f}" if pd.notnull(x) else "0")
+            
+            csv = csv_data.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Download CSV (Full Data)",
                 data=csv,
@@ -1166,8 +1187,9 @@ with tab2:
             )
         
         with col_dl2:
-            # Download hanya kolom tertentu
-            csv_simple = display_df.to_csv(index=False).encode('utf-8')
+            # Download hanya kolom tertentu dengan format
+            csv_simple = display_df.copy()
+            csv_simple = csv_simple.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 CSV (Simple)",
                 data=csv_simple,
@@ -1177,12 +1199,31 @@ with tab2:
             )
         
         with col_dl3:
-            # Copy to clipboard
+            # Copy to clipboard dengan format yang baik
             if st.button("📋 Copy to Clipboard", use_container_width=True):
-                display_text = display_df.to_string(index=False)
+                # Format untuk clipboard
+                clip_df = display_df.copy()
+                # Format angka dengan separator
+                for col in ['Close', 'Value']:
+                    if col in clip_df.columns:
+                        clip_df[col] = clip_df[col].apply(lambda x: f"Rp {x:,.0f}" if pd.notnull(x) else "Rp 0")
+                
+                for col in ['Volume', 'Avg_Order_Volume', 'Frequency']:
+                    if col in clip_df.columns:
+                        clip_df[col] = clip_df[col].apply(lambda x: f"{x:,.0f}" if pd.notnull(x) else "0")
+                
+                for col in ['Change %', 'AOV_Ratio', 'Conviction_Score']:
+                    if col in clip_df.columns:
+                        if col == 'Change %':
+                            clip_df[col] = clip_df[col].apply(lambda x: f"{x:+.2f}%" if pd.notnull(x) else "0.00%")
+                        elif col == 'AOV_Ratio':
+                            clip_df[col] = clip_df[col].apply(lambda x: f"{x:.2f}x" if pd.notnull(x) else "0.00x")
+                        elif col == 'Conviction_Score':
+                            clip_df[col] = clip_df[col].apply(lambda x: f"{x:.0f}%" if pd.notnull(x) else "0%")
+                
+                display_text = clip_df.to_string(index=False)
                 st.code(display_text, language='text')
                 st.success("✅ Data copied to clipboard!")
-        
         
         # ======================================================================
         # INTERPRETATION GUIDE
@@ -1287,19 +1328,23 @@ with tab2:
                 
                 with col_ref1:
                     total_stocks = len(df_daily)
-                    st.metric("Total Saham", total_stocks)
+                    st.metric("Total Saham", f"{total_stocks:,}")
                 
                 with col_ref2:
                     if 'AOV_Ratio' in df_daily.columns:
                         whale_count = len(df_daily[df_daily['AOV_Ratio'] >= 1.5])
                         retail_count = len(df_daily[(df_daily['AOV_Ratio'] <= 0.6) & (df_daily['AOV_Ratio'] > 0)])
-                        st.metric("Whale Stocks", whale_count)
-                        st.metric("Retail Stocks", retail_count)
+                        st.metric("Whale Stocks", f"{whale_count:,}")
+                        st.metric("Retail Stocks", f"{retail_count:,}")
                 
                 with col_ref3:
                     if 'Value' in df_daily.columns:
                         total_value = df_daily['Value'].sum()
-                        st.metric("Total Market Value", f"Rp {total_value/1_000_000_000:.1f}B")
+                        if total_value >= 1_000_000_000:
+                            display_val = f"Rp {total_value/1_000_000_000:.1f} B"
+                        else:
+                            display_val = f"Rp {total_value:,.0f}"
+                        st.metric("Total Market Value", display_val)
                 
                 with col_ref4:
                     if 'Volume' in df_daily.columns:
