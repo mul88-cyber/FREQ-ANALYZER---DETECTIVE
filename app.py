@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 # 1. KONFIGURASI HALAMAN & CSS
 # ==============================================================================
 st.set_page_config(
-    page_title="Market Intelligence Dashboard - MA50 Standard",
+    page_title="Frequency Analyzer Intelligence Dashboard - MA50 Standard",
     page_icon="🐋",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -37,7 +37,7 @@ st.markdown("""
 <div style='display: flex; align-items: center; gap: 15px; margin-bottom: 20px;'>
     <div style='font-size: 48px;'>🐋</div>
     <div>
-        <h1 style='margin: 0; color: #2d3748;'>Market Intelligence Dashboard</h1>
+        <h1 style='margin: 0; color: #2d3748;'>Frequency Analyzer Intelligence Dashboard</h1>
         <p style='margin: 0; color: #718096; font-size: 16px;'>MA50 Standard | Whale & Split Detection</p>
     </div>
 </div>
