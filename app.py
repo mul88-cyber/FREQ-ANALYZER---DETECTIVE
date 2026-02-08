@@ -150,280 +150,197 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 
 # ==============================================================================
-# TAB 1: DEEP DIVE ANALYSIS (FIXED & RICH FEATURE)
+# TAB 1: DEEP DIVE ANALYSIS (IMPROVED LAYOUT)
 # ==============================================================================
 with tab1:
     st.markdown("### 📈 Deep Dive Stock Analysis")
     
-    # FILTER SECTION
+    # --- A. FILTER SECTION ---
     st.markdown('<div class="filter-section">', unsafe_allow_html=True)
-    st.markdown("**🔍 Filter Settings**")
+    c_sel1, c_sel2, c_sel3 = st.columns([2, 1, 1])
     
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        # Stock Selection
+    with c_sel1:
         all_stocks = sorted(df['Stock Code'].unique().tolist())
-        selected_stock = st.selectbox(
-            "Select Stock",
-            all_stocks,
-            key="deepdive_stock"
-        )
+        selected_stock = st.selectbox("🔍 Pilih Saham", all_stocks, key="deepdive_stock")
     
-    with col2:
-        # Chart Period
-        chart_days = st.slider(
-            "Chart Period (Days)",
-            min_value=30,
-            max_value=250,
-            value=100,
-            step=10,
-            key="chart_days"
-        )
+    with c_sel2:
+        chart_days = st.selectbox("Rentang Chart", [30, 60, 90, 120, 200], index=3, format_func=lambda x: f"{x} Hari")
     
-    with col3:
-        # Chart Type
-        chart_type = st.radio(
-            "Chart Type",
-            ["Candlestick", "Line Chart"],
-            horizontal=True,
-            key="chart_type"
-        )
-    
+    with c_sel3:
+        chart_type = st.radio("Tipe Chart", ["Candle", "Line"], horizontal=True, label_visibility="collapsed")
     st.markdown('</div>', unsafe_allow_html=True)
     
-    # Get stock data
+    # --- B. DATA PROCESSING ---
     stock_data = df[df['Stock Code'] == selected_stock].tail(chart_days).copy()
     
-    # --- PENGECEKAN DATA UTAMA (FIX ERROR) ---
+    # Cek Data Ada/Tidak
     if not stock_data.empty:
         last_row = stock_data.iloc[-1]
         company_name = last_row.get('Company Name', selected_stock)
         
-        # Enhanced Status Card
+        # --- C. STATUS CARD (VERDICT) ---
         aov_ratio = last_row.get('AOV_Ratio', 1)
         
-        # Calculate conviction score
-        if aov_ratio >= 1.5:  # Default whale threshold
+        # Hitung Conviction Score (0-100%)
+        if aov_ratio >= 1.5:
             conviction_score = min(99, ((aov_ratio - 1.5) / (5 - 1.5)) * 80 + 20)
-            card_class = "whale-card"
-            status_text = "🐋 WHALE DETECTED"
-        elif aov_ratio <= 0.6 and aov_ratio > 0:
-            conviction_score = min(99, ((0.6 - aov_ratio) / 0.6) * 80 + 20)
-            card_class = "split-card"
-            status_text = "⚡ RETAIL/SPLIT DOMINANT"
-        else:
-            conviction_score = 50
-            card_class = "neutral-card"
-            status_text = "⚖️ NORMAL ACTIVITY"
-        
-        # Display enhanced status card
-        st.markdown(f"""
-        <div class="{card_class}">
-            <div class="big-text">{status_text}</div>
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <div>
-                    <div class="value-text">Conviction: {conviction_score:.0f}%</div>
-                    <div class="small-text">AOV Ratio: {aov_ratio:.2f}x | Avg Lot: {last_row.get('Avg_Order_Volume', 0):,.0f}</div>
-                </div>
-                <div style="text-align: right;">
-                    <div class="medium-text">Rp {last_row.get('Close', 0):,.0f}</div>
-                    <div class="small-text" style="color: {'#00cc00' if last_row.get('Change %', 0) >= 0 else '#ff4444'}">
-                        {last_row.get('Change %', 0):+.2f}%
+            card_html = f"""
+            <div class="whale-card">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div class="big-text">🐋 WHALE DETECTED</div>
+                        <div class="small-text">Indikasi Akumulasi Besar (Lot Gede)</div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div class="value-text">Score: {conviction_score:.0f}%</div>
+                        <div class="small-text">AOV Ratio: <b>{aov_ratio:.2f}x</b></div>
                     </div>
                 </div>
             </div>
-        </div>
-        """, unsafe_allow_html=True)
+            """
+        elif aov_ratio <= 0.6 and aov_ratio > 0:
+            conviction_score = min(99, ((0.6 - aov_ratio) / 0.6) * 80 + 20)
+            card_html = f"""
+            <div class="split-card">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div class="big-text">⚡ SPLIT / RETAIL</div>
+                        <div class="small-text">Indikasi Distribusi atau Akumulasi Pecah Order</div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div class="value-text">Score: {conviction_score:.0f}%</div>
+                        <div class="small-text">AOV Ratio: <b>{aov_ratio:.2f}x</b></div>
+                    </div>
+                </div>
+            </div>
+            """
+        else:
+            card_html = f"""
+            <div class="neutral-card">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div class="big-text">⚖️ NORMAL ACTIVITY</div>
+                        <div class="small-text">Pergerakan Volume Wajar (Sesuai Rata-rata)</div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div class="value-text">Neutral</div>
+                        <div class="small-text">AOV Ratio: <b>{aov_ratio:.2f}x</b></div>
+                    </div>
+                </div>
+            </div>
+            """
+        st.markdown(card_html, unsafe_allow_html=True)
+
+        # --- D. KEY METRICS ROW (PROFILE) ---
+        # Kita pindahkan metrics ke sini agar langsung terlihat
+        m1, m2, m3, m4, m5 = st.columns(5)
         
-        # ======================================================================
-        # ENHANCED COMBO CHART
-        # ======================================================================
+        with m1:
+            curr_price = last_row.get('Close', 0)
+            chg_pct = last_row.get('Change %', 0)
+            st.metric("Harga Terakhir", f"Rp {curr_price:,.0f}", f"{chg_pct:+.2f}%")
+            
+        with m2:
+            daily_val = last_row.get('Value', 0)
+            val_fmt = f"{daily_val/1e9:.1f} M" if daily_val >= 1e9 else f"{daily_val/1e6:.0f} Jt"
+            st.metric("Nilai Transaksi", val_fmt, help="Total Value Transaksi Hari Ini")
+            
+        with m3:
+            freq = last_row.get('Frequency', 0)
+            st.metric("Frekuensi", f"{freq:,.0f}x", help="Jumlah kali transaksi terjadi")
+            
+        with m4:
+            # Foreign Flow
+            net_foreign = last_row.get('Net Foreign', 0)
+            nf_fmt = f"{abs(net_foreign)/1e9:.1f} M" if abs(net_foreign) >= 1e9 else f"{abs(net_foreign)/1e6:.0f} Jt"
+            st.metric("Asing (Net)", nf_fmt, delta=nf_fmt if net_foreign > 0 else f"-{nf_fmt}", delta_color="normal")
+
+        with m5:
+            # Free Float (New Feature)
+            free_float = last_row.get('Free Float', 0) # Pastikan kolom ini ada di CSV sector
+            # Jika data tidak ada (0 atau NaN), tampilkan strip
+            ff_display = f"{free_float:.1f}%" if free_float > 0 else "-"
+            
+            # Logic label "Kering/Liquid"
+            label_ff = "Normal"
+            if free_float > 0:
+                if free_float < 10: label_ff = "⚠️ Kering"
+                elif free_float > 40: label_ff = "💧 Liquid"
+            
+            st.metric("Free Float", ff_display, label_ff, delta_color="off", help="< 10% = Saham Kering (Enteng). > 40% = Saham Berat.")
+
+        st.divider()
+
+        # --- E. CHARTING SECTION ---
         fig = make_subplots(
             rows=3, cols=1,
             shared_xaxes=True,
             vertical_spacing=0.05,
-            row_heights=[0.5, 0.25, 0.25],
+            row_heights=[0.6, 0.2, 0.2],
             specs=[[{"secondary_y": False}], [{"secondary_y": False}], [{"secondary_y": False}]]
         )
         
-        # 1. PRICE CHART
-        if chart_type == "Candlestick":
-            valid_candle_data = stock_data[
-                (stock_data['Open Price'] > 0) & 
-                (stock_data['High'] > 0) & 
-                (stock_data['Low'] > 0) & 
-                (stock_data['Close'] > 0)
-            ].copy()
-            
-            if not valid_candle_data.empty:
+        # 1. Price Chart
+        if chart_type == "Candle":
+            # Validasi data candle
+            valid_candle = stock_data[(stock_data['Open Price'] > 0) & (stock_data['High'] > 0)].copy()
+            if not valid_candle.empty:
                 fig.add_trace(go.Candlestick(
-                    x=valid_candle_data['Last Trading Date'],
-                    open=valid_candle_data['Open Price'],
-                    high=valid_candle_data['High'],
-                    low=valid_candle_data['Low'],
-                    close=valid_candle_data['Close'],
-                    name='OHLC',
-                    increasing_line_color='#2ecc71',
-                    decreasing_line_color='#e74c3c'
+                    x=valid_candle['Last Trading Date'],
+                    open=valid_candle['Open Price'], high=valid_candle['High'],
+                    low=valid_candle['Low'], close=valid_candle['Close'],
+                    name='OHLC', increasing_line_color='#00cc00', decreasing_line_color='#ff4444'
                 ), row=1, col=1)
             else:
-                # Fallback ke line chart
-                fig.add_trace(go.Scatter(
-                    x=stock_data['Last Trading Date'], y=stock_data['Close'],
-                    mode='lines', line=dict(color='#2962ff', width=2), name='Close Price'
-                ), row=1, col=1)
+                fig.add_trace(go.Scatter(x=stock_data['Last Trading Date'], y=stock_data['Close'], mode='lines', line=dict(color='#2962ff'), name='Close'), row=1, col=1)
         else:
-            # Line chart
-            fig.add_trace(go.Scatter(
-                x=stock_data['Last Trading Date'], y=stock_data['Close'],
-                mode='lines', line=dict(color='#2962ff', width=2), name='Close Price'
-            ), row=1, col=1)
+            fig.add_trace(go.Scatter(x=stock_data['Last Trading Date'], y=stock_data['Close'], mode='lines', line=dict(color='#2962ff', width=2), name='Close'), row=1, col=1)
         
-        # Whale Signals (Fix: Pakai .get untuk menghindari KeyError)
+        # Markers
         if 'Whale_Signal' in stock_data.columns:
-            whale_signals = stock_data[stock_data['Whale_Signal']]
-            if not whale_signals.empty and 'High' in whale_signals.columns:
-                whale_customdata = whale_signals[['AOV_Ratio']].values
-                y_positions = whale_signals['High'] * 1.01
-                
-                fig.add_trace(go.Scatter(
-                    x=whale_signals['Last Trading Date'], y=y_positions,
-                    mode='markers', marker=dict(symbol='triangle-up', size=12, color='#00cc00', line=dict(width=2, color='black')),
-                    name='Whale Signal', hovertemplate='<b>🐋 WHALE ENTRY</b><br>Date: %{x}<br>AOV Ratio: %{customdata[0]:.2f}x<extra></extra>',
-                    customdata=whale_customdata
-                ), row=1, col=1)
+            ws = stock_data[stock_data['Whale_Signal']]
+            if not ws.empty and 'High' in ws.columns:
+                fig.add_trace(go.Scatter(x=ws['Last Trading Date'], y=ws['High']*1.02, mode='markers', marker=dict(symbol='triangle-down', size=12, color='#00cc00', line=dict(width=1, color='black')), name='Whale'), row=1, col=1)
         
-        # Split Signals
         if 'Split_Signal' in stock_data.columns:
-            split_signals = stock_data[stock_data['Split_Signal']]
-            if not split_signals.empty and 'Low' in split_signals.columns:
-                split_customdata = split_signals[['AOV_Ratio']].values
-                y_positions = split_signals['Low'] * 0.99
-                
-                fig.add_trace(go.Scatter(
-                    x=split_signals['Last Trading Date'], y=y_positions,
-                    mode='markers', marker=dict(symbol='triangle-down', size=12, color='#ff4444', line=dict(width=2, color='black')),
-                    name='Split Signal', hovertemplate='<b>⚡ RETAIL DOMINANT</b><br>Date: %{x}<br>AOV Ratio: %{customdata[0]:.2f}x<extra></extra>',
-                    customdata=split_customdata
-                ), row=1, col=1)
+            ss = stock_data[stock_data['Split_Signal']]
+            if not ss.empty and 'Low' in ss.columns:
+                fig.add_trace(go.Scatter(x=ss['Last Trading Date'], y=ss['Low']*0.98, mode='markers', marker=dict(symbol='triangle-up', size=12, color='#ff4444', line=dict(width=1, color='black')), name='Split'), row=1, col=1)
+
+        # 2. Volume Chart
+        colors = ['#00cc00' if r >= 1.5 else '#ff4444' if (r <= 0.6 and r > 0) else '#cfd8dc' for r in stock_data['AOV_Ratio']]
+        fig.add_trace(go.Bar(x=stock_data['Last Trading Date'], y=stock_data['Volume'], marker_color=colors, name='Volume'), row=2, col=1)
         
-        # 2. VOLUME BAR CHART
-        vol_colors = []
-        for ratio in stock_data['AOV_Ratio']:
-            if ratio >= 1.5: vol_colors.append('#00cc00')
-            elif ratio <= 0.6 and ratio > 0: vol_colors.append('#ff4444')
-            else: vol_colors.append('#718096')
-        
-        volume_customdata = stock_data[['Avg_Order_Volume']].values
-        
-        fig.add_trace(go.Bar(
-            x=stock_data['Last Trading Date'], y=stock_data['Volume'],
-            marker_color=vol_colors, name='Volume', opacity=0.7,
-            hovertemplate='<b>Volume</b>: %{y:,.0f} lots<br><b>Avg Lot</b>: %{customdata[0]:,.0f}<extra></extra>',
-            customdata=volume_customdata
-        ), row=2, col=1)
-        
-        # 3. AOV RATIO LINE CHART
-        # Fix: Pastikan kolom MA50_AOVol ada
+        # 3. AOV Ratio Line
         ma_col = 'MA50_AOVol' if 'MA50_AOVol' in stock_data.columns else 'MA30_AOVol'
-        ma_values = stock_data[ma_col].fillna(0).values if ma_col in stock_data.columns else np.zeros(len(stock_data))
-        
-        aov_customdata = np.column_stack([
-            stock_data['Avg_Order_Volume'].fillna(0).values,
-            ma_values
-        ])
+        ma_vals = stock_data[ma_col].fillna(0).values if ma_col in stock_data.columns else np.zeros(len(stock_data))
         
         fig.add_trace(go.Scatter(
             x=stock_data['Last Trading Date'], y=stock_data['AOV_Ratio'],
-            mode='lines+markers', line=dict(color='#9c88ff', width=2),
-            name='AOV Ratio', hovertemplate='<b>AOV Ratio</b>: %{y:.2f}x<br>Avg: %{customdata[0]:,.0f} | MA: %{customdata[1]:.0f}<extra></extra>',
-            customdata=aov_customdata
+            mode='lines', line=dict(color='#9c88ff', width=2), name='AOV Ratio',
+            customdata=np.stack((stock_data['Avg_Order_Volume'], ma_vals), axis=-1),
+            hovertemplate='Ratio: %{y:.2f}x<br>Avg: %{customdata[0]:.0f}<br>MA: %{customdata[1]:.0f}'
         ), row=3, col=1)
         
-        # Add horizontal reference lines
-        fig.add_hline(y=1.5, line_dash="dash", line_color="#00cc00", opacity=0.5, annotation_text="Whale (1.5x)", row=3, col=1)
-        fig.add_hline(y=0.6, line_dash="dash", line_color="#ff4444", opacity=0.5, annotation_text="Retail (0.6x)", row=3, col=1)
-        
-        # --- FIX CHART OMPONG (Gap Removal) ---
-        # Logika: Ambil semua tanggal di kalender antara start & end, cari yang TIDAK ada di data
+        # Ref Lines
+        fig.add_hline(y=1.5, line_dash="dash", line_color="green", row=3, col=1)
+        fig.add_hline(y=0.6, line_dash="dash", line_color="red", row=3, col=1)
+
+        # Gap Fixing (Anti Ompong)
         dt_all = pd.date_range(start=stock_data['Last Trading Date'].min(), end=stock_data['Last Trading Date'].max())
         dt_obs = [d.strftime("%Y-%m-%d") for d in stock_data['Last Trading Date']]
         dt_breaks = [d.strftime("%Y-%m-%d") for d in dt_all if d.strftime("%Y-%m-%d") not in dt_obs]
-
-        # Update layout
-        fig.update_layout(
-            height=800,
-            title=f"{company_name} ({selected_stock}) - Comprehensive Analysis",
-            showlegend=True,
-            hovermode="x unified",
-            xaxis_rangeslider_visible=False,
-            plot_bgcolor='white',
-            paper_bgcolor='white',
-            font=dict(size=12),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
         
-        # Terapkan Gap Removal
         fig.update_xaxes(rangebreaks=[dict(values=dt_breaks)])
+        fig.update_layout(height=700, margin=dict(l=10, r=10, t=10, b=10), showlegend=False, hovermode="x unified")
+        fig.update_yaxes(title_text="Price", row=1, col=1)
+        fig.update_yaxes(title_text="Vol", row=2, col=1)
+        fig.update_yaxes(title_text="AOV", row=3, col=1)
 
-        # Update axis labels
-        fig.update_yaxes(title_text="Price (Rp)", row=1, col=1)
-        fig.update_yaxes(title_text="Volume (Lots)", row=2, col=1)
-        fig.update_yaxes(title_text="AOV Ratio (x)", row=3, col=1)
-        
-        # Display chart
         st.plotly_chart(fig, use_container_width=True)
-        
-        # ======================================================================
-        # ADDITIONAL METRICS (TETAP ADA)
-        # ======================================================================
-        st.markdown("### 📊 Detailed Metrics")
-        
-        metric_cols = st.columns(4)
-        
-        with metric_cols[0]:
-            daily_value = last_row.get('Value', 0)
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="small-text">Daily Value</div>
-                <div class="value-text">Rp {daily_value:,.0f}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with metric_cols[1]:
-            frequency = last_row.get('Frequency', 0)
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="small-text">Frequency</div>
-                <div class="value-text">{frequency:,.0f}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with metric_cols[2]:
-            if 'Net Foreign' in last_row:
-                net_foreign = last_row['Net Foreign']
-                color = "#00cc00" if net_foreign >= 0 else "#ff4444"
-                st.markdown(f"""
-                <div class="metric-card">
-                    <div class="small-text">Net Foreign</div>
-                    <div class="value-text" style="color: {color}">Rp {net_foreign:,.0f}</div>
-                </div>
-                """, unsafe_allow_html=True)
-        
-        with metric_cols[3]:
-            if 'Bid_Offer_Imbalance' in last_row:
-                imbalance = last_row['Bid_Offer_Imbalance']
-                color = "#00cc00" if imbalance >= 0 else "#ff4444"
-                st.markdown(f"""
-                <div class="metric-card">
-                    <div class="small-text">Bid/Offer Imbalance</div>
-                    <div class="value-text" style="color: {color}">{imbalance:+.2%}</div>
-                </div>
-                """, unsafe_allow_html=True)
     
     else:
-        st.warning("Data tidak tersedia untuk saham ini pada periode yang dipilih.")
+        st.warning("Data tidak tersedia untuk saham ini.")
 
 # ==============================================================================
 # TAB 2: WHALE SCREENER (Dual Mode + Context)
