@@ -164,7 +164,7 @@ with tab1:
             "Chart Period (Days)",
             min_value=30,
             max_value=250,
-            value=120,
+            value=100,
             step=10,
             key="chart_days"
         )
