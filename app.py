@@ -113,12 +113,17 @@ if df_raw is None:
 # ==============================================================================
 df = df_raw.sort_values(by=['Stock Code', 'Last Trading Date']).copy()
 
-# A. Pastikan MA50 Ada (Fallback jika CSV lama belum punya MA50)
+# A. Pastikan MA50 Ada
 if 'MA50_AOVol' not in df.columns:
     df['MA50_AOVol'] = df.groupby('Stock Code')['Avg_Order_Volume'].transform(lambda x: x.rolling(50, min_periods=1).mean())
 
-# B. Hitung Ratio Anomali (AOV / MA50)
+# B. Hitung Ratio Anomali
 df['AOV_Ratio'] = np.where(df['MA50_AOVol'] > 0, df['Avg_Order_Volume'] / df['MA50_AOVol'], 0)
+
+# C. [PENTING] BUAT KOLOM SIGNAL (Fix Error KeyError)
+# Kolom ini wajib ada agar bisa dipanggil di Tab 1 (Charting)
+df['Whale_Signal'] = df['AOV_Ratio'] >= 1.5
+df['Split_Signal'] = (df['AOV_Ratio'] <= 0.6) & (df['AOV_Ratio'] > 0)
 
 max_date = df['Last Trading Date'].max()
 
