@@ -995,144 +995,82 @@ with tab2:
     """, unsafe_allow_html=True)
     
     if not suspects.empty:
-        # Quick stats bar - DITAMBAHKAN FORMAT SEPARATOR
-        col_stats1, col_stats2, col_stats3, col_stats4 = st.columns(4)
-        
-        with col_stats1:
-            avg_aov = suspects['AOV_Ratio'].mean()
-            st.metric("Rata-rata AOV", f"{avg_aov:.2f}x")
-        
-        with col_stats2:
-            total_value = suspects['Value'].sum()
-            # FORMAT DENGAN SEPARATOR KOMA
-            if total_value >= 1_000_000_000:
-                display_value = f"Rp {total_value/1_000_000_000:,.1f} B"
-            elif total_value >= 1_000_000:
-                display_value = f"Rp {total_value/1_000_000:,.1f} Jt"
-            else:
-                display_value = f"Rp {total_value:,.0f}"
-            st.metric("Total Nilai", display_value)
-        
-        with col_stats3:
-            total_volume = suspects['Volume'].sum()
-            # FORMAT DENGAN SEPARATOR KOMA
-            st.metric("Total Volume", f"{total_volume:,.0f} lot")
-        
-        with col_stats4:
-            if 'Conviction_Score' in suspects.columns:
-                avg_conviction = suspects['Conviction_Score'].mean()
-                st.metric("Avg Conviction", f"{avg_conviction:.0f}%")
-            else:
-                st.metric("Total Saham", f"{len(suspects):,}")
-        
-        # Display results table
-        st.markdown("#### 📋 Results Table")
-        
-        # Pilih kolom untuk ditampilkan - PERBAIKI: "Nilai" ganti jadi "Value"
-        display_cols = [
-            'Stock Code', 'Close', 'Change %', 'Volume',
-            'Avg_Order_Volume', 'AOV_Ratio', 'Value',  # Ganti 'Nilai' jadi 'Value'
-            'Frequency'
+        # ==============================================================
+        # 1. DEFINISI URUTAN KOLOM (STRICT ORDER)
+        # ==============================================================
+        # Kita definisikan urutan persis sesuai keinginan Bapak
+        desired_order = [
+            'Stock Code', 
+            'Company Name', 
+            'Sector', 
+            'Close', 
+            'Change %', 
+            'Frequency', 
+            'Volume', 
+            'Value', 
+            'Avg_Order_Volume', 
+            'AOV_Ratio', 
+            'Conviction_Score'
         ]
         
-        # Tambah Conviction Score jika ada
-        if 'Conviction_Score' in suspects.columns:
-            display_cols.insert(7, 'Conviction_Score')
+        # Filter: Hanya ambil kolom yang benar-benar ada di data (untuk hindari error)
+        display_cols = [col for col in desired_order if col in suspects.columns]
         
-        # Tambah Company Name jika ada
-        if 'Company Name' in suspects.columns:
-            display_cols.insert(1, 'Company Name')
-        
-        # Tambah Sector jika ada
-        if 'Sector' in suspects.columns:
-            display_cols.append('Sector')
-        
-        # Ambil data untuk display
+        # Buat dataframe baru khusus untuk tampilan sesuai urutan
         display_df = suspects[display_cols].copy()
-        
+
         # ==============================================================
-        # PERBAIKAN: FORMATTING & STYLING
+        # 2. STYLING & FORMATTING (Background Color & Koma)
         # ==============================================================
-        
-        # 1. Inisialisasi Styler (JANGAN DI-FORMAT DULU KE STRING)
-        # Kita biarkan data tetap numeric agar background_gradient bekerja
+        # Inisialisasi Styler
         styled_df = display_df.style
 
-        # 2. Terapkan Background Gradient (Saat data masih angka)
+        # A. Background Gradient (Warna) - Dihitung saat data masih Angka
         if anomaly_type == "🐋 Whale Signal (High AOV)":
             if 'AOV_Ratio' in display_df.columns:
-                styled_df = styled_df.background_gradient(
-                    subset=['AOV_Ratio'],
-                    cmap=table_color_map,
-                    vmin=min_ratio,
-                    vmax=display_df['AOV_Ratio'].max()
-                )
-            
+                styled_df = styled_df.background_gradient(subset=['AOV_Ratio'], cmap='Greens', vmin=min_ratio, vmax=display_df['AOV_Ratio'].max())
             if 'Conviction_Score' in display_df.columns:
-                styled_df = styled_df.background_gradient(
-                    subset=['Conviction_Score'],
-                    cmap='Greens',
-                    vmin=0,
-                    vmax=100
-                )
+                styled_df = styled_df.background_gradient(subset=['Conviction_Score'], cmap='Greens', vmin=0, vmax=100)
             
-            # Highlight Change % (Custom Logic)
-            def color_whale_change(val):
+            # Helper function warna change %
+            def color_change(val):
                 if pd.isna(val): return ''
-                if val > 1.0: return 'background-color: #d1fae5; color: #065f46; font-weight: bold'
-                if val > 0: return 'color: #10b981'
-                if val < -1.0: return 'background-color: #fee2e2; color: #991b1b'
-                if val < 0: return 'color: #ef4444'
+                if val > 0: return 'color: #10b981' # Hijau
+                if val < 0: return 'color: #ef4444' # Merah
                 return ''
-            
             if 'Change %' in display_df.columns:
-                styled_df = styled_df.map(color_whale_change, subset=['Change %'])
+                styled_df = styled_df.map(color_change, subset=['Change %'])
 
-        else:
-            # Logic Gradient untuk Retail
+        else: # Retail/Split
             if 'AOV_Ratio' in display_df.columns:
-                styled_df = styled_df.background_gradient(
-                    subset=['AOV_Ratio'],
-                    cmap=table_color_map,
-                    vmin=0,
-                    vmax=max_ratio
-                )
-            
+                styled_df = styled_df.background_gradient(subset=['AOV_Ratio'], cmap='Reds_r', vmin=0, vmax=max_ratio)
             if 'Conviction_Score' in display_df.columns:
-                styled_df = styled_df.background_gradient(
-                    subset=['Conviction_Score'],
-                    cmap='Reds',
-                    vmin=0,
-                    vmax=100
-                )
+                styled_df = styled_df.background_gradient(subset=['Conviction_Score'], cmap='Reds', vmin=0, vmax=100)
             
-            def color_retail_change(val):
+            def color_change(val):
                 if pd.isna(val): return ''
-                if val < -2.0: return 'background-color: #fef3c7; color: #92400e; font-weight: bold'
-                if val < 0: return 'color: #f59e0b'
-                if val > 2.0: return 'background-color: #dbeafe; color: #1e40af'
-                if val > 0: return 'color: #3b82f6'
+                if val > 0: return 'color: #3b82f6' # Biru
+                if val < 0: return 'color: #f59e0b' # Orange
                 return ''
-
             if 'Change %' in display_df.columns:
-                styled_df = styled_df.map(color_retail_change, subset=['Change %'])
+                styled_df = styled_df.map(color_change, subset=['Change %'])
 
-        # 3. Terapkan Format String (TERAKHIR) - Ini yang memunculkan Koma & Rp
-        # Ini mengubah tampilan jadi text, makanya harus ditaruh paling akhir setelah perhitungan warna selesai
+        # B. String Formatting (Koma & Rp) - Diterapkan TERAKHIR
+        # Ini memastikan angka muncul sebagai "1,000" bukan "1000"
         styled_df = styled_df.format({
             'Close': 'Rp {:,.0f}',
             'Change %': '{:+.2f}%',
+            'Frequency': '{:,.0f}',
             'Volume': '{:,.0f}',
+            'Value': 'Rp {:,.0f}',
             'Avg_Order_Volume': '{:,.0f}',
             'AOV_Ratio': '{:.2f}x',
-            'Value': 'Rp {:,.0f}', 
-            'Frequency': '{:,.0f}',
             'Conviction_Score': '{:.0f}%'
         })
-        
-        # 4. Tampilkan Dataframe
-        # PENTING: Hapus 'format' di column_config agar tidak konflik dengan Pandas Styler
-        # Kita ganti NumberColumn jadi Column biasa atau TextColumn agar Streamlit menampilkan apa adanya (termasuk koma)
+
+        # ==============================================================
+        # 3. RENDER DATAFRAME (FINAL OUTPUT)
+        # ==============================================================
         st.dataframe(
             styled_df,
             use_container_width=True,
@@ -1141,7 +1079,7 @@ with tab2:
                 'Stock Code': st.column_config.TextColumn("Kode", width="small"),
                 'Company Name': st.column_config.TextColumn("Nama Perusahaan", width="medium"),
                 'Sector': st.column_config.TextColumn("Sektor", width="medium"),
-                'Close': st.column_config.Column("Harga"), # Biarkan Styler yang mengatur format
+                'Close': st.column_config.Column("Harga"), # Pakai 'Column' biasa agar format string (Rp/Koma) dari Pandas tidak rusak
                 'Change %': st.column_config.Column("Change %"),
                 'Frequency': st.column_config.Column("Freq"),
                 'Volume': st.column_config.Column("Volume"),
@@ -1149,7 +1087,8 @@ with tab2:
                 'Avg_Order_Volume': st.column_config.Column("Avg Lot"),
                 'AOV_Ratio': st.column_config.Column("AOV Ratio"),
                 'Conviction_Score': st.column_config.Column("Conviction")
-            }
+            },
+            hide_index=True
         )
         
         # Download button
