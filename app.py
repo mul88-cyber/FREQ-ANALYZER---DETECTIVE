@@ -12,20 +12,33 @@ import io
 # 1. KONFIGURASI HALAMAN
 # ==============================================================================
 st.set_page_config(
-    page_title="Avg Order Volume Anomaly",
-    page_icon="🐋",
+    page_title="Market Intelligence Dashboard",
+    page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
-st.title("🐋 Avg Order Volume (AOV) Anomaly Detector")
+# Custom CSS untuk Status Card
 st.markdown("""
-**Workflow:** 1. Gunakan **Tab Screener** untuk mencari saham yang mengalami anomali Volume per Order.
-2. Pindah ke **Tab Deep Dive** untuk memvalidasi chart dan melihat tren historisnya.
-""")
+<style>
+    .status-card {
+        padding: 20px;
+        border-radius: 10px;
+        border: 1px solid #ddd;
+        margin-bottom: 20px;
+    }
+    .whale { background-color: #e6fffa; border-color: #00cc00; color: #006600; }
+    .retail { background-color: #fff5f5; border-color: #ff4444; color: #cc0000; }
+    .neutral { background-color: #f0f2f6; border-color: #ccc; color: #333; }
+    .big-text { font-size: 24px; font-weight: bold; }
+    .small-text { font-size: 14px; opacity: 0.8; }
+</style>
+""", unsafe_allow_html=True)
+
+st.title("📈 Market Intelligence: Price & Volume Analysis")
 
 # ==============================================================================
-# 2. LOAD DATA
+# 2. LOAD DATA DARI GDRIVE
 # ==============================================================================
 FOLDER_ID = '1hX2jwUrAgi4Fr8xkcFWjCW6vbk6lsIlP'
 FILE_NAME = 'Kompilasi_Data_1Tahun.csv'
@@ -67,12 +80,16 @@ def load_data():
         # Preprocessing
         df['Last Trading Date'] = pd.to_datetime(df['Last Trading Date'])
         
-        numeric_cols = ['Close', 'Open Price', 'High', 'Low', 'Volume', 'Frequency', 'Avg_Order_Volume', 'MA30_AOVol', 'Value']
+        numeric_cols = ['Close', 'Open Price', 'High', 'Low', 'Volume', 'Frequency', 'Avg_Order_Volume', 'MA30_AOVol', 'Value', 'Change', 'Previous']
         for col in numeric_cols:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         
-        # Hitung Value jika 0
+        # Hitung Change % jika belum ada atau error
+        if 'Change %' not in df.columns:
+             df['Change %'] = np.where(df['Previous'] > 0, (df['Change'] / df['Previous']) * 100, 0)
+        
+        # Hitung Value (Rp) jika 0
         if 'Value' not in df.columns or df['Value'].sum() == 0:
             df['Value'] = df['Close'] * df['Volume'] * 100
             
@@ -81,191 +98,226 @@ def load_data():
         st.error(f"Gagal Load Data: {e}")
         return None
 
-with st.spinner('Sedang menyiapkan data Paus & Semut...'):
+with st.spinner('Sedang menyiapkan data pasar...'):
     df_raw = load_data()
 
 if df_raw is None:
     st.stop()
 
 # ==============================================================================
-# 3. CALCULATE METRICS (GLOBAL)
+# 3. GLOBAL CALCULATION
 # ==============================================================================
 df = df_raw.sort_values(by=['Stock Code', 'Last Trading Date']).copy()
 
-# AOV Ratio: Ratio Lot per Trade hari ini dibanding rata-rata 30 hari
+# AOV Ratio: (Avg Lot per Trade Hari Ini) / (Rata-rata 30 Hari)
 df['AOV_Ratio'] = np.where(df['MA30_AOVol'] > 0, df['Avg_Order_Volume'] / df['MA30_AOVol'], 0)
 
 # ==============================================================================
-# 4. SIDEBAR CONTROLS
+# 4. SIDEBAR (HANYA UNTUK SCREENER)
 # ==============================================================================
-st.sidebar.header("⚙️ Filter Settings")
+st.sidebar.header("⚙️ Filter Screener")
+st.sidebar.caption("Filter ini hanya berlaku untuk Tab 'Screener'. Tab 'Chart' menampilkan semua saham.")
 
-# Tanggal & Mode
 max_date = df['Last Trading Date'].max()
 selected_date = st.sidebar.date_input("Tanggal Analisa", max_date)
 selected_date = pd.to_datetime(selected_date)
 
-anomaly_type = st.sidebar.radio(
-    "Target Deteksi:",
-    ("🐋 Whale Signal (High AOV)", "⚡ Split/Retail Signal (Low AOV)"),
-    help="Whale = Akumulasi Kasar (Lot Gede). Split = Distribusi/Akumulasi Senyap (Lot Kecil)."
-)
+# Threshold Screener
+min_whale_ratio = st.sidebar.slider("Min. Whale Ratio (x Lipat)", 1.5, 10.0, 2.0)
+min_value = st.sidebar.number_input("Min. Transaksi Harian (Rp)", value=1_000_000_000, step=500_000_000)
 
-st.sidebar.divider()
-
-# Dynamic Thresholds
-if anomaly_type == "🐋 Whale Signal (High AOV)":
-    st.sidebar.subheader("Parameter Paus")
-    min_ratio = st.sidebar.slider("Min. Lonjakan AOV (x Lipat)", 1.5, 10.0, 2.0, help="Order hari ini harus X kali lebih besar dari rata-rata.")
-    min_value = st.sidebar.number_input("Min. Transaksi (Rp)", value=1_000_000_000, step=500_000_000)
-else:
-    st.sidebar.subheader("Parameter Semut")
-    max_ratio = st.sidebar.slider("Max. AOV Ratio (0.x)", 0.1, 0.9, 0.6, help="Order hari ini harus DI BAWAH 0.x kali rata-rata.")
-    min_value = st.sidebar.number_input("Min. Transaksi (Rp)", value=500_000_000, step=100_000_000)
-
-# Filter Data Harian (Global Filter)
 df_daily = df[df['Last Trading Date'] == selected_date].copy()
 
 # ==============================================================================
-# 5. LOGIC SCREENING (Dilakukan di luar Tab agar hasil bisa dipakai di kedua Tab)
+# 5. TABS LAYOUT
 # ==============================================================================
-if anomaly_type == "🐋 Whale Signal (High AOV)":
-    suspects = df_daily[
-        (df_daily['AOV_Ratio'] >= min_ratio) & 
-        (df_daily['Value'] >= min_value)
-    ].sort_values(by='AOV_Ratio', ascending=False)
-    
-    table_color_map = 'Greens'
-    metric_label = "Paus Terdeteksi"
-    
-else:
-    suspects = df_daily[
-        (df_daily['AOV_Ratio'] <= max_ratio) & 
-        (df_daily['AOV_Ratio'] > 0) & 
-        (df_daily['Value'] >= min_value)
-    ].sort_values(by='AOV_Ratio', ascending=True) # Urut dari yang paling anjlok
-    
-    table_color_map = 'Reds_r'
-    metric_label = "Split/Retail Terdeteksi"
+tab1, tab2 = st.tabs(["📈 Deep Dive Chart (All Stocks)", "📋 Screener Anomali"])
 
-# ==============================================================================
-# 6. TABS LAYOUT
-# ==============================================================================
-tab1, tab2 = st.tabs(["📋 Screener Results", "📈 Deep Dive & Validation"])
-
-# --- TAB 1: HASIL SCANNER ---
+# --- TAB 1: CHART ANALYSIS (UTAMA) ---
 with tab1:
-    # Metrics Bar
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Tanggal Data", selected_date.strftime('%d %b %Y'))
-    c2.metric("Total Emiten Discan", len(df_daily))
-    c3.metric(metric_label, len(suspects), delta_color="inverse")
-
-    st.subheader(f"Hasil Pencarian: {anomaly_type}")
+    # 1. DROPDOWN PILIH SAHAM (SEMUA SAHAM)
+    all_stocks = sorted(df['Stock Code'].unique().tolist())
     
-    if not suspects.empty:
-        # Menampilkan Tabel
-        cols = ['Stock Code', 'Close', 'Change %', 'Avg_Order_Volume', 'MA30_AOVol', 'AOV_Ratio', 'Value']
-        
-        st.dataframe(
-            suspects[cols].style.format({
-                'Close': 'Rp {:,.0f}',
-                'Change %': '{:.2f}%',
-                'Avg_Order_Volume': '{:,.1f} Lot',
-                'MA30_AOVol': '{:,.1f} Lot',
-                'AOV_Ratio': '{:.2f}x',
-                'Value': 'Rp {:,.0f}'
-            }).background_gradient(subset=['AOV_Ratio'], cmap=table_color_map),
-            use_container_width=True
-        )
-        st.success(f"💡 **Tip:** Pilih salah satu kode saham di atas, lalu pindah ke tab **'Deep Dive & Validation'** untuk analisa chart.")
-    else:
-        st.info("Tidak ada saham yang memenuhi kriteria filter saat ini. Coba longgarkan parameter di Sidebar.")
-
-# --- TAB 2: DEEP DIVE CHART ---
-with tab2:
-    st.header("🔍 Validasi Chart: Price vs Avg Order Volume")
+    # Fitur pencarian cepat
+    col_sel1, col_sel2 = st.columns([1, 3])
+    with col_sel1:
+        selected_stock = st.selectbox("🔍 Pilih Saham:", all_stocks)
     
-    # Smart Dropdown:
-    # Jika ada suspect dari Tab 1, jadikan itu prioritas di list pilihan.
-    # Jika tidak ada, tampilkan semua saham.
-    
-    if not suspects.empty:
-        stock_options = suspects['Stock Code'].tolist()
-        st.info(f"List di bawah otomatis terisi dengan {len(suspects)} saham hasil screener.")
-    else:
-        stock_options = df['Stock Code'].unique().tolist()
-        st.warning("Belum ada hasil screener. Menampilkan semua saham.")
-
-    selected_stock = st.selectbox("Pilih Saham untuk Validasi:", stock_options)
-
-    # Ambil Data Historis (6 Bulan Terakhir)
+    # Ambil Data Saham Terpilih (120 Hari Terakhir)
     df_chart = df[df['Stock Code'] == selected_stock].tail(120).copy()
-
+    
     if not df_chart.empty:
-        # Plotting Chart
+        last_row = df_chart.iloc[-1]
+        
+        # ======================================================================
+        # 2. STATUS & CONVICTION SYSTEM
+        # ======================================================================
+        # Logic Conviction:
+        # Whale = AOV Ratio Tinggi (> 2x) & Value Besar
+        # Retail/Split = AOV Ratio Rendah (< 0.6x) & Freq Tinggi
+        
+        aov_ratio = last_row['AOV_Ratio']
+        daily_val = last_row['Value']
+        change_pct = last_row['Change %']
+        
+        # Hitung Skor Conviction (0-100%)
+        # Base score dari seberapa ekstrem AOV Ratio-nya
+        
+        status_html = ""
+        
+        if aov_ratio >= 1.5: # POTENSI WHALE
+            # Rumus Conviction Whale: Semakin besar rasio & value, semakin yakin.
+            score = min(100, (aov_ratio / 2.0) * 80) # Max 100
+            if daily_val > 5_000_000_000: score += 10 # Tambah 10% jika transaksi > 5M
+            score = min(99, score)
+            
+            status_html = f"""
+            <div class="status-card whale">
+                <div class="big-text">🐋 DETEKSI PAUS (WHALE)</div>
+                <div><b>Conviction Rate: {score:.0f}%</b></div>
+                <div class="small-text">
+                    • Volume Besar dengan Frekuensi Rendah (Avg Order: {last_row['Avg_Order_Volume']:,.0f} Lot)<br>
+                    • AOV Ratio: <b>{aov_ratio:.2f}x</b> dari rata-rata bulanan.<br>
+                    • Total Transaksi: Rp {daily_val/1e9:,.1f} Miliar.
+                </div>
+            </div>
+            """
+            
+        elif aov_ratio <= 0.6 and aov_ratio > 0: # POTENSI SPLIT/RETAIL
+            # Rumus Conviction Split
+            score = min(100, (0.6 / aov_ratio) * 60)
+            if last_row['Frequency'] > last_row['MA30_AOVol']: score += 10 # Freq tinggi
+            score = min(99, score)
+            
+            status_html = f"""
+            <div class="status-card retail">
+                <div class="big-text">⚡ DETEKSI SPLIT / RETAIL</div>
+                <div><b>Conviction Rate: {score:.0f}%</b></div>
+                <div class="small-text">
+                    • Volume Besar tapi Frekuensi SANGAT TINGGI (Avg Order: {last_row['Avg_Order_Volume']:,.0f} Lot)<br>
+                    • Indikasi: Distribusi ke Ritel atau Akumulasi Pecah Order.<br>
+                    • AOV Ratio: <b>{aov_ratio:.2f}x</b> (Drop di bawah rata-rata).
+                </div>
+            </div>
+            """
+            
+        else: # NETRAL
+            status_html = f"""
+            <div class="status-card neutral">
+                <div class="big-text">⚖️ STATUS: NORMAL / NETRAL</div>
+                <div class="small-text">
+                    Tidak ada anomali volume per order yang signifikan.<br>
+                    AOV Ratio: {aov_ratio:.2f}x (Wajar).
+                </div>
+            </div>
+            """
+        
+        st.markdown(status_html, unsafe_allow_html=True)
+
+        # ======================================================================
+        # 3. COMBO CHART (LINE PRICE + VOLUME BAR)
+        # ======================================================================
+        
+        # Buat Subplots (Baris 1: Harga, Baris 2: Volume)
         fig = make_subplots(
-            rows=2, cols=1, shared_xaxes=True, 
-            vertical_spacing=0.05, row_heights=[0.6, 0.4],
-            subplot_titles=(f"Price Action: {selected_stock}", "Avg Order Volume Analysis")
+            rows=2, cols=1, 
+            shared_xaxes=True, 
+            vertical_spacing=0.03, 
+            row_heights=[0.7, 0.3],
+            specs=[[{"secondary_y": False}], [{"secondary_y": False}]]
         )
 
-        # 1. Candlestick Price
-        fig.add_trace(go.Candlestick(
+        # --- CHART 1: LINE CHART HARGA (CLOSE) ---
+        # Warna garis tergantung trend hari terakhir (Hijau jika naik, Merah jika turun)
+        line_color = '#00cc00' if change_pct >= 0 else '#ff4444'
+        
+        fig.add_trace(go.Scatter(
             x=df_chart['Last Trading Date'],
-            open=df_chart['Open Price'], high=df_chart['High'],
-            low=df_chart['Low'], close=df_chart['Close'],
-            name='Price'
+            y=df_chart['Close'],
+            mode='lines',
+            line=dict(color='#2962ff', width=2), # Biru profesional
+            name='Close Price',
+            # Custom Hover Data (Price + Change%)
+            customdata=np.stack((df_chart['Change %'], df_chart['Open Price'], df_chart['High'], df_chart['Low']), axis=-1),
+            hovertemplate='<b>Tanggal</b>: %{x}<br>' +
+                          '<b>Close</b>: Rp %{y:,.0f}<br>' +
+                          '<b>Change</b>: %{customdata[0]:.2f}%<br>' + # Menampilkan Change%
+                          'OHLC: %{customdata[1]:,.0f} - %{customdata[2]:,.0f} - %{customdata[3]:,.0f}<extra></extra>'
         ), row=1, col=1)
 
-        # 2. Bar Chart AOV
-        # Logic Warna:
-        # Hijau Terang = Whale (Ratio > 1.5x dari MA30)
-        # Merah = Split/Retail (Ratio < 0.6x dari MA30)
-        # Abu = Normal
-        
-        bar_colors = []
+        # Tambahkan area fill di bawah garis (opsional, biar cantik)
+        fig.add_trace(go.Scatter(
+            x=df_chart['Last Trading Date'],
+            y=df_chart['Close'],
+            fill='tozeroy',
+            fillcolor='rgba(41, 98, 255, 0.1)', # Transparan biru
+            line=dict(width=0),
+            showlegend=False,
+            hoverinfo='skip'
+        ), row=1, col=1)
+
+        # --- CHART 2: VOLUME BAR ---
+        # Warna Bar Volume berdasarkan Status Anomali (Hijau=Whale, Merah=Retail, Abu=Normal)
+        vol_colors = []
         for val, ma in zip(df_chart['Avg_Order_Volume'], df_chart['MA30_AOVol']):
-            if ma == 0: ratio = 0
-            else: ratio = val / ma
-            
+            ratio = val / ma if ma > 0 else 0
             if ratio >= 1.5:
-                bar_colors.append('#00cc00') # 🟢 WHALE STRONG
+                vol_colors.append('#00cc00') # Hijau (Whale)
             elif ratio <= 0.6:
-                bar_colors.append('#ff4444') # 🔴 SPLIT STRONG
+                vol_colors.append('#ff4444') # Merah (Split)
             else:
-                bar_colors.append('lightgray') # Normal
+                vol_colors.append('#cfd8dc') # Abu (Normal)
 
         fig.add_trace(go.Bar(
             x=df_chart['Last Trading Date'],
-            y=df_chart['Avg_Order_Volume'],
-            marker_color=bar_colors,
-            name='Lot per Trade',
-            hovertemplate='%{y:,.1f} Lot'
+            y=df_chart['Volume'],
+            marker_color=vol_colors,
+            name='Volume',
+            customdata=df_chart['Avg_Order_Volume'],
+            hovertemplate='<b>Volume</b>: %{y:,.0f} Lembar<br>' +
+                          '<b>Avg Lot/Trade</b>: %{customdata:,.0f}<extra></extra>'
         ), row=2, col=1)
 
-        # Garis MA30 (Baseline)
-        fig.add_trace(go.Scatter(
-            x=df_chart['Last Trading Date'],
-            y=df_chart['MA30_AOVol'],
-            line=dict(color='blue', width=2),
-            name='MA30 (Rata-rata)',
-        ), row=2, col=1)
-
-        fig.update_layout(height=700, xaxis_rangeslider_visible=False, hovermode='x unified')
-        fig.update_yaxes(title_text="Harga", row=1, col=1)
-        fig.update_yaxes(title_text="Lot / Trade", row=2, col=1)
+        # Layout styling
+        fig.update_layout(
+            height=600,
+            margin=dict(l=10, r=10, t=10, b=10),
+            showlegend=False,
+            hovermode="x unified", # Tooltip gabungan vertical
+            xaxis_rangeslider_visible=False,
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            xaxis=dict(showgrid=False),
+            yaxis=dict(showgrid=True, gridcolor='#f0f0f0', title="Harga Saham"),
+            yaxis2=dict(showgrid=False, title="Volume")
+        )
 
         st.plotly_chart(fig, use_container_width=True)
 
-        # Penjelasan Cara Validasi
-        with st.expander("📖 Panduan Membaca Chart Deep Dive"):
-            st.markdown("""
-            **Validasi Sinyal WHALE (Bar Hijau):**
-            * Apakah muncul saat harga *Breakout*? ✅ **Valid Buy**.
-            * Apakah muncul saat harga di Pucuk? ⚠️ **Hati-hati Distribusi/Crossing**.
-
-            **Validasi Sinyal SPLIT (Bar Merah):**
-            * Apakah muncul saat harga *Sideways* di bawah? ✅ **Valid Akumulasi Senyap**.
-            * Apakah muncul saat harga terbang tinggi? ⚠️ **Bahaya (Ritel FOMO)**.
-            """)
+# --- TAB 2: SCREENER (LIST ANOMALI) ---
+with tab2:
+    st.subheader(f"📋 Screener Saham Anomali (Tanggal: {selected_date.strftime('%d %b %Y')})")
+    
+    # Filter Logic
+    suspects = df_daily[
+        (df_daily['AOV_Ratio'] >= min_whale_ratio) & 
+        (df_daily['Value'] >= min_value)
+    ].sort_values(by='AOV_Ratio', ascending=False)
+    
+    col_met1, col_met2 = st.columns(2)
+    col_met1.metric("Total Saham Terdeteksi", len(suspects))
+    
+    if not suspects.empty:
+        st.dataframe(
+            suspects[['Stock Code', 'Close', 'Change %', 'Volume', 'Avg_Order_Volume', 'AOV_Ratio', 'Value']].style.format({
+                'Close': 'Rp {:,.0f}',
+                'Change %': '{:.2f}%',
+                'Volume': '{:,.0f}',
+                'Avg_Order_Volume': '{:,.1f} Lot',
+                'AOV_Ratio': '{:.2f}x',
+                'Value': 'Rp {:,.0f}'
+            }).background_gradient(subset=['AOV_Ratio'], cmap='Greens'),
+            use_container_width=True
+        )
+    else:
+        st.info("Tidak ada saham yang memenuhi kriteria Whale pada tanggal ini.")
