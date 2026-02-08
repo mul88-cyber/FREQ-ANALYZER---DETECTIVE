@@ -621,6 +621,10 @@ with tab2:
     if 'filters_expanded' not in st.session_state:
         st.session_state.filters_expanded = True
     
+    # VARIABEL GLOBAL YANG DIPERLUKAN
+    min_date = df['Last Trading Date'].min().date()
+    max_date_global = df['Last Trading Date'].max().date()
+    
     # Header dengan toggle button
     col_header1, col_header2 = st.columns([3, 1])
     
@@ -653,13 +657,11 @@ with tab2:
             
             with col_mode2:
                 # Date Selection
-                min_date = df['Last Trading Date'].min().date()
-                max_date = df['Last Trading Date'].max().date()
                 selected_date = st.date_input(
                     "Tanggal Analisa",
-                    value=max_date,
+                    value=max_date_global,
                     min_value=min_date,
-                    max_value=max_date,
+                    max_value=max_date_global,
                     key="screener_date"
                 )
                 selected_date = pd.to_datetime(selected_date)
@@ -716,7 +718,7 @@ with tab2:
                     min_value = st.number_input(
                         "Min. Transaksi (Rp)", 
                         value=500_000_000, 
-                step=100_000_000,
+                        step=100_000_000,
                         format="%d",
                         key="retail_value"
                     )
@@ -798,24 +800,16 @@ with tab2:
                 if st.button("🔄 Reset ke Default", use_container_width=True):
                     # Reset semua filter ke default
                     st.session_state.filters_expanded = True
-                    if 'detection_mode' in st.session_state:
-                        del st.session_state.detection_mode
-                    if 'screener_date' in st.session_state:
-                        del st.session_state.screener_date
-                    if anomaly_type == "🐋 Whale Signal (High AOV)":
-                        if 'whale_ratio' in st.session_state:
-                            del st.session_state.whale_ratio
-                        if 'whale_value' in st.session_state:
-                            del st.session_state.whale_value
-                        if 'whale_freq' in st.session_state:
-                            del st.session_state.whale_freq
-                    else:
-                        if 'retail_ratio' in st.session_state:
-                            del st.session_state.retail_ratio
-                        if 'retail_value' in st.session_state:
-                            del st.session_state.retail_value
-                        if 'retail_freq' in st.session_state:
-                            del st.session_state.retail_freq
+                    # Clear specific session states
+                    keys_to_clear = [
+                        'detection_mode', 'screener_date', 'whale_ratio', 
+                        'whale_value', 'whale_freq', 'retail_ratio', 
+                        'retail_value', 'retail_freq', 'screener_sector',
+                        'price_filter', 'min_change', 'sort_by'
+                    ]
+                    for key in keys_to_clear:
+                        if key in st.session_state:
+                            del st.session_state[key]
                     st.rerun()
             
             with col_action3:
@@ -839,30 +833,59 @@ with tab2:
             
             with col_sum1:
                 st.markdown("**Mode:**")
-                st.text(anomaly_type if 'detection_mode' in st.session_state else "🐋 Whale Signal (High AOV)")
+                # Gunakan default jika belum ada di session state
+                current_mode = st.session_state.get('detection_mode', '🐋 Whale Signal (High AOV)')
+                st.text(current_mode)
             
             with col_sum2:
                 st.markdown("**Tanggal:**")
-                st.text(selected_date.strftime('%d %b %Y') if 'screener_date' in st.session_state else max_date.strftime('%d %b %Y'))
+                # Gunakan default jika belum ada di session state
+                if 'screener_date' in st.session_state:
+                    current_date = st.session_state.screener_date
+                    st.text(current_date.strftime('%d %b %Y'))
+                else:
+                    st.text(max_date_global.strftime('%d %b %Y'))
             
             with col_sum3:
                 st.markdown("**Threshold:**")
-                if anomaly_type == "🐋 Whale Signal (High AOV)":
-                    threshold_val = min_ratio if 'whale_ratio' in st.session_state else 2.0
+                # Gunakan default berdasarkan mode
+                if current_mode == "🐋 Whale Signal (High AOV)":
+                    threshold_val = st.session_state.get('whale_ratio', 2.0)
                     st.text(f"AOV ≥ {threshold_val}x")
                 else:
-                    threshold_val = max_ratio if 'retail_ratio' in st.session_state else 0.6
+                    threshold_val = st.session_state.get('retail_ratio', 0.6)
                     st.text(f"AOV ≤ {threshold_val}x")
     
     # ==========================================================================
-    # LOGIC DETECTION (SAMA SEPERTI SEBELUMNYA)
+    # LOGIC DETECTION 
     # ==========================================================================
+    # Gunakan nilai dari session state atau default
+    anomaly_type = st.session_state.get('detection_mode', '🐋 Whale Signal (High AOV)')
+    selected_date_value = st.session_state.get('screener_date', max_date_global)
+    selected_date = pd.to_datetime(selected_date_value)
+    
+    # Gunakan parameter berdasarkan mode
+    if anomaly_type == "🐋 Whale Signal (High AOV)":
+        min_ratio = st.session_state.get('whale_ratio', 2.0)
+        min_value = st.session_state.get('whale_value', 1_000_000_000)
+        min_freq = st.session_state.get('whale_freq', 50)
+        table_color_map = 'Greens'
+        metric_label = "Paus Terdeteksi"
+    else:
+        max_ratio = st.session_state.get('retail_ratio', 0.6)
+        min_value = st.session_state.get('retail_value', 500_000_000)
+        min_freq = st.session_state.get('retail_freq', 100)
+        table_color_map = 'Reds_r'
+        metric_label = "Split/Retail Terdeteksi"
+    
     # Get data for selected date
     df_daily = df[df['Last Trading Date'] == selected_date].copy()
     
     if df_daily.empty:
         st.warning(f"⚠️ Tidak ada data untuk tanggal {selected_date.strftime('%d %b %Y')}")
-        df_daily = latest_df.copy()
+        # Gunakan data terbaru
+        latest_date = df['Last Trading Date'].max()
+        df_daily = df[df['Last Trading Date'] == latest_date].copy()
         st.info(f"Menampilkan data terbaru: {latest_date.strftime('%d %b %Y')}")
     
     # Apply detection logic berdasarkan mode
@@ -899,10 +922,20 @@ with tab2:
     
     # Apply additional filters
     if not suspects.empty:
-        if 'selected_sector' in locals() and selected_sector != 'Semua Sektor' and 'Sector' in suspects.columns:
+        # Sector filter
+        selected_sector = st.session_state.get('screener_sector', 'Semua Sektor')
+        if selected_sector != 'Semua Sektor' and 'Sector' in suspects.columns:
             suspects = suspects[suspects['Sector'] == selected_sector]
         
+        # Price change filter
+        price_change_filter = st.session_state.get('price_filter', False)
         if price_change_filter and 'Change %' in suspects.columns:
+            min_change = st.session_state.get('min_change', 0.0)
+            change_direction = st.session_state.get(
+                'whale_dir' if anomaly_type == "🐋 Whale Signal (High AOV)" else 'retail_dir', 
+                'Netral'
+            )
+            
             if change_direction == "Positif":
                 suspects = suspects[suspects['Change %'] >= min_change]
             elif change_direction == "Negatif":
@@ -910,22 +943,41 @@ with tab2:
             elif change_direction == "Netral":
                 suspects = suspects[abs(suspects['Change %']) <= abs(min_change)]
         
-        sort_column = sort_options[sort_by]
+        # Sort results
+        sort_by = st.session_state.get('sort_by', 'AOV Ratio (Tertinggi)')
+        sort_options = {
+            "AOV Ratio (Tertinggi)": "AOV_Ratio",
+            "Nilai Transaksi (Tertinggi)": "Value",
+            "Volume (Tertinggi)": "Volume",
+            "Frekuensi (Tertinggi)": "Frequency",
+            "Perubahan % (Tertinggi)": "Change %",
+            "Conviction Score (Tertinggi)": "Conviction_Score"
+        } if anomaly_type == "🐋 Whale Signal (High AOV)" else {
+            "AOV Ratio (Terendah)": "AOV_Ratio",
+            "Nilai Transaksi (Tertinggi)": "Value",
+            "Volume (Tertinggi)": "Volume",
+            "Frekuensi (Tertinggi)": "Frequency",
+            "Perubahan % (Terendah)": "Change %"
+        }
+        
+        sort_column = sort_options.get(sort_by, 'AOV_Ratio')
         ascending = False
+        
         if anomaly_type == "⚡ Split/Retail Signal (Low AOV)":
             if sort_by == "AOV Ratio (Terendah)":
                 ascending = True
             elif sort_by == "Perubahan % (Terendah)":
                 ascending = True
+        
         suspects = suspects.sort_values(by=sort_column, ascending=ascending)
         
         # Auto-collapse filters jika di-set
-        if 'auto_collapse' in st.session_state and st.session_state.auto_collapse:
+        if st.session_state.get('auto_collapse', False):
             st.session_state.filters_expanded = False
     
     # ==========================================================================
-    # DISPLAY RESULTS (SAMA SEPERTI SEBELUMNYA)
-    # ==========================================================================
+    # DISPLAY RESULTS 
+
     st.markdown(f"""
     <div class="metric-card">
         <div class="big-text">{metric_label}</div>
